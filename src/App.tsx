@@ -305,6 +305,103 @@ export default function App(): React.ReactElement {
             Analizando área seleccionada...
           </div>
         )}
+        {/* 🔹 Search y controles del mapa */}
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            zIndex: 10,
+            background: "rgba(255,255,255,0.95)",
+            padding: 8,
+            borderRadius: 6,
+            boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+          }}
+        >
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              placeholder="Buscar dirección..."
+              style={{ padding: "6px 8px", width: 220 }}
+            />
+            <button
+              onClick={handleSearch}
+              disabled={isSearching || !searchQuery.trim()}
+            >
+              {isSearching ? "Buscando..." : "Ir"}
+            </button>
+          </div>
+
+          {searchError && (
+            <div style={{ color: "crimson", fontSize: 12, marginBottom: 6 }}>
+              {searchError}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button onClick={() => setMapMode(mapMode === "streets" ? "satellite" : "streets")}>
+              {mapMode === "streets" ? "Satélite" : "Mapa"}
+            </button>
+            <button
+              onClick={() => {
+                if (is3D) {
+                  setSavedCamera({ pitch: viewState.pitch, bearing: viewState.bearing });
+                  setViewState({ ...viewState, pitch: 0, bearing: 0 });
+                  setIs3D(false);
+                } else {
+                  setViewState({ ...viewState, pitch: savedCamera?.pitch ?? 45, bearing: savedCamera?.bearing ?? 0 });
+                  setIs3D(true);
+                }
+              }}
+            >
+              {is3D ? "3D" : "2D"}
+            </button>
+            <button onClick={() => setViewState({ ...viewState, zoom: (viewState.zoom || 11) + 1 })}>+</button>
+            <button onClick={() => setViewState({ ...viewState, zoom: (viewState.zoom || 11) - 1 })}>-</button>
+            <button onClick={checkAndOpenStreetView}>Street View</button>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+              Grid
+            </label>
+          </div>
+        </div>
+
+        {/* 🔹 Ventana Street View */}
+        {streetViewOpen && streetViewCoords && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 12,
+              left: 12,
+              width: 480,
+              height: 360,
+              zIndex: 20,
+              background: "#fff",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+              borderRadius: 6,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                padding: "6px 8px",
+                background: "#f5f5f5",
+              }}
+            >
+              <div style={{ fontSize: 13 }}>Street View</div>
+              <button onClick={() => setStreetViewOpen(false)}>Cerrar</button>
+            </div>
+            <iframe
+              title="street-view"
+              style={{ width: "100%", height: "100%", border: 0 }}
+              src={`https://www.google.com/maps?q=&layer=c&cbll=${streetViewCoords[1]},${streetViewCoords[0]}&cbp=11,0,0,0,0`}
+            />
+          </div>
+        )}
         {error && (
           <div style={{
             position: "absolute", top: 20, left: "50%", transform: "translateX(-50%)",
@@ -313,9 +410,6 @@ export default function App(): React.ReactElement {
             {error}
           </div>
         )}
-
-        {/* El resto de tu UI permanece igual (Search, StreetView, Popups, etc.) */}
-        {/* ... */}
       </div>
     </div>
   );
