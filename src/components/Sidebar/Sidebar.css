@@ -1,0 +1,72 @@
+/* Sidebar.css */
+
+.sidebar {
+  width: 240px; /* ancho fijo */
+  background-color: #0f1a2a; /* fondo oscuro */
+  color: #cbd5e0; /* texto claro para contraste */
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 1rem;
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: #edf2f7;
+  border-bottom: 1px solid #1a2635;
+}
+
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.sidebar-item .icon {
+  margin-right: 0.75rem;
+  font-size: 1.2rem;
+}
+
+.sidebar-item .label {
+  font-size: 1rem;
+}
+
+.sidebar-item:hover {
+  background-color: #1a2635;
+  color: #ffffff;
+}
+
+.sidebar-item.active {
+  background-color: #2b3b50;
+  color: #ffffff;
+}
+
+.sidebar-footer {
+  padding: 1rem;
+  border-top: 1px solid #1a2635;
+  /* puedes poner botones, toggles, etc */
+}
+
+/* Scrollbar estilizado (opcional) */
+.sidebar-nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background-color: #2e3a4e;
+  border-radius: 3px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track {
+  background-color: #0f1a2a;
+}
