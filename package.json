@@ -43,5 +43,12 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "@types/axios": "^0.9.36",
+    "axios": "^1.12.2",
+    "install": "^0.13.0",
+    "npm": "^11.6.1",
+    "vite": "^7.1.9"
   }
 }
