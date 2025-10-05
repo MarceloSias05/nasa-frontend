@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import MapView from './components/MapView';
+import Sidebar from './components/Sidebar';
 import { GeoJsonLayer } from '@deck.gl/layers';
 import { ScenegraphLayer } from '@deck.gl/mesh-layers';
 import { MAP_BOUNDS, HUMAN_MODEL_URL, INITIAL_VIEW_STATE, CELL_SIZE_KM } from './config';
@@ -11,10 +12,14 @@ export default function App(): React.ReactElement {
   const [is3D, setIs3D] = useState(true);
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE as any);
   const [showGrid, setShowGrid] = useState(false);
+  const [activeVis, setActiveVis] = useState<string>('hexbin');
+  const [layer, setLayer] = useState<string>('Población');
+  const [cellSize, setCellSize] = useState<number>(50);
+  const [clusterRadius, setClusterRadius] = useState<number>(75);
+  const [maxHeight, setMaxHeight] = useState<number>(25);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  // searchResults state removed (no UI yet). Keep selectedResult for marker.
   const [selectedResult, setSelectedResult] = useState<any | null>(null);
   const [streetViewOpen, setStreetViewOpen] = useState(false);
   const [streetViewCoords, setStreetViewCoords] = useState<[number, number] | null>(null);
@@ -80,43 +85,57 @@ export default function App(): React.ReactElement {
   };
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
-      <MapView viewState={viewState} onViewStateChange={(vs: any) => setViewState(clampViewState(vs))} layers={layers} mapMode={mapMode} onMapLoad={onMapLoad} />
+    <div style={{ display: 'flex', height: '100vh', width: '100vw' }}>
+      <Sidebar
+        active={activeVis}
+        onSelect={(id) => setActiveVis(id)}
+        layer={layer}
+        onLayerChange={(l) => setLayer(l)}
+        cellSize={cellSize}
+        onCellSizeChange={(v) => setCellSize(v)}
+        clusterRadius={clusterRadius}
+        onClusterRadiusChange={(v) => setClusterRadius(v)}
+        maxHeight={maxHeight}
+        onMaxHeightChange={(v) => setMaxHeight(v)}
+      />
+      <div style={{ position: 'relative', flex: 1 }}>
+        <MapView viewState={viewState} onViewStateChange={(vs: any) => setViewState(clampViewState(vs))} layers={layers} mapMode={mapMode} onMapLoad={onMapLoad} />
 
-      {/* Controls */}
-      <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, background: 'rgba(255,255,255,0.95)', padding: 8, borderRadius: 6 }}>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }} placeholder="Buscar dirección..." style={{ padding: '6px 8px', width: 220 }} />
-          <button onClick={() => handleSearch()} disabled={isSearching || !searchQuery.trim()}>{isSearching ? 'Buscando...' : 'Ir'}</button>
-        </div>
-        {searchError && <div style={{ color: 'crimson', fontSize: 12, marginBottom: 6 }}>{searchError}</div>}
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={() => setMapMode(mapMode === 'streets' ? 'satellite' : 'streets')}>{mapMode === 'streets' ? 'Satélite' : 'Mapa'}</button>
-          <button onClick={() => setIs3D((v) => !v)}>{is3D ? '3D' : '2D'}</button>
-          <button onClick={() => setViewState({ ...viewState, zoom: Math.min((viewState.zoom || 11) + 1, INITIAL_VIEW_STATE.maxZoom) })}>+</button>
-          <button onClick={() => setViewState({ ...viewState, zoom: Math.max((viewState.zoom || 11) - 1, INITIAL_VIEW_STATE.minZoom) })}>-</button>
-          <button onClick={() => checkAndOpenStreetView()}>Street View</button>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />Grid</label>
-        </div>
-      </div>
-
-      {streetViewOpen && streetViewCoords && (
-        <div style={{ position: 'absolute', bottom: 12, left: 12, width: 480, height: 360, zIndex: 20, background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', borderRadius: 6, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: '#f5f5f5' }}>
-            <div style={{ fontSize: 13 }}>Street View</div>
-            <div><button onClick={() => setStreetViewOpen(false)}>Cerrar</button></div>
+        {/* Controls */}
+        <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, background: 'rgba(255,255,255,0.95)', padding: 8, borderRadius: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+            <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }} placeholder="Buscar dirección..." style={{ padding: '6px 8px', width: 220 }} />
+            <button onClick={() => handleSearch()} disabled={isSearching || !searchQuery.trim()}>{isSearching ? 'Buscando...' : 'Ir'}</button>
           </div>
-          <iframe title="street-view" style={{ width: '100%', height: '100%', border: 0 }} src={`https://www.google.com/maps?q=&layer=c&cbll=${streetViewCoords[1]},${streetViewCoords[0]}&cbp=11,0,0,0,0`} />
+          {searchError && <div style={{ color: 'crimson', fontSize: 12, marginBottom: 6 }}>{searchError}</div>}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setMapMode(mapMode === 'streets' ? 'satellite' : 'streets')}>{mapMode === 'streets' ? 'Satélite' : 'Mapa'}</button>
+            <button onClick={() => setIs3D((v) => !v)}>{is3D ? '3D' : '2D'}</button>
+            <button onClick={() => setViewState({ ...viewState, zoom: Math.min((viewState.zoom || 11) + 1, INITIAL_VIEW_STATE.maxZoom) })}>+</button>
+            <button onClick={() => setViewState({ ...viewState, zoom: Math.max((viewState.zoom || 11) - 1, INITIAL_VIEW_STATE.minZoom) })}>-</button>
+            <button onClick={() => checkAndOpenStreetView()}>Street View</button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />Grid</label>
+          </div>
         </div>
-      )}
+    
+        {streetViewOpen && streetViewCoords && (
+          <div style={{ position: 'absolute', bottom: 12, left: 12, width: 480, height: 360, zIndex: 20, background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: '#f5f5f5' }}>
+              <div style={{ fontSize: 13 }}>Street View</div>
+              <div><button onClick={() => setStreetViewOpen(false)}>Cerrar</button></div>
+            </div>
+            <iframe title="street-view" style={{ width: '100%', height: '100%', border: 0 }} src={`https://www.google.com/maps?q=&layer=c&cbll=${streetViewCoords[1]},${streetViewCoords[0]}&cbp=11,0,0,0,0`} />
+          </div>
+        )}
 
-      <div style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 15 }}>
-        <div style={{ background: 'rgba(255,255,255,0.95)', padding: 6, borderRadius: 6 }}>
-          {!showHuman3D ? (
-            <button title="Mostrar humano" onClick={() => { const [[west, south]] = MAP_BOUNDS as any; setHumanCoords([west + 0.02, south + 0.02]); setShowHuman3D(true); }}>🧍</button>
-          ) : (
-            <button title="Quitar humano" onClick={() => { setShowHuman3D(false); setHumanCoords(null); }}>✖</button>
-          )}
+        <div style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 15 }}>
+          <div style={{ background: 'rgba(255,255,255,0.95)', padding: 6, borderRadius: 6 }}>
+            {!showHuman3D ? (
+              <button title="Mostrar humano" onClick={() => { const [[west, south]] = MAP_BOUNDS as any; setHumanCoords([west + 0.02, south + 0.02]); setShowHuman3D(true); }}>🧍</button>
+            ) : (
+              <button title="Quitar humano" onClick={() => { setShowHuman3D(false); setHumanCoords(null); }}>✖</button>
+            )}
+          </div>
         </div>
       </div>
     </div>
