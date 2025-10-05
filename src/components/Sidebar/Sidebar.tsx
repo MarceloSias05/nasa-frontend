@@ -11,10 +11,11 @@ const Icon = ({ path, size = 16 }: { path: string; size?: number }) => (
 );
 
 const menuItems = [
-  { icon: <Icon path="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" />, label: "Hexbin/Grid", key: "hexbin" },
+  { icon: <Icon path="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" />, label: "Cargar Población", key: "load-population" },
   { icon: <Icon path="M9 3L5 5v13l4 2 4-2 4 2V5l-4-2-4 2z" />, label: "Cluster Markers", key: "cluster" },
   { icon: <Icon path="M12 2l7 4v6l-7 4-7-4V6l7-4zM12 12l7-4M12 12v6M12 12L5 8" />, label: "Extrusión 3D", key: "extrusion3d" },
-  { icon: <Icon path="M12 7v5l3 2" />, label: "Isochrones", key: "isochrones" },
+  { icon: <Icon path="M3 3h18v2H3zM3 7h18v2H3zM3 11h18v2H3zM3 15h18v2H3z" />, label: "Guardar historial", key: "save-history" },
+  { icon: <Icon path="M4 6h16v2H4zM4 10h16v2H4zM4 14h16v2H4z" />, label: "Historial", key: "history" },
   { icon: <Icon path="M3 11h4v8H3zm7-4h4v12h-4zm7-4h4v16h-4z" />, label: "Voronoi", key: "voronoi" },
 ];
 
@@ -29,6 +30,10 @@ interface SidebarProps {
   onClusterRadiusChange: (value: number) => void;
   maxHeight: number;
   onMaxHeightChange: (value: number) => void;
+  hexRadius: number;
+  onHexRadiusChange: (value: number) => void;
+  hexElevationScale: number;
+  onHexElevationScaleChange: (value: number) => void;
   budget: number;
   onBudgetChange: (value: number) => void;
   maxParques: number;
@@ -38,6 +43,7 @@ interface SidebarProps {
   onCsvPolygonLoaded?: (csvText: string, options?: { invert?: boolean }) => void;
   freezeUploaded?: boolean;
   onFreezeToggle?: (v: boolean) => void;
+  onLoadHistoryEntry?: (entry: any) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -52,6 +58,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   onCsvPolygonLoaded,
   freezeUploaded,
   onFreezeToggle,
+  hexRadius,
+  onHexRadiusChange,
+  hexElevationScale,
+  onHexElevationScaleChange,
+  onLoadHistoryEntry,
 }) => {
   const [invertLatLon, setInvertLatLon] = useState(false);
   const formatCurrency = (v: number) =>
@@ -107,6 +118,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         ))}
       </nav>
 
+  {/* Historial: ver en el área principal */}
+
       {/* Panel de parámetros */}
       <section className="sidebar-footer">
         <div style={{ padding: "12px 10px" }}>
@@ -131,6 +144,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onChange={(e) => onFreezeToggle && onFreezeToggle(e.target.checked)}
               />
               <label htmlFor="freeze-uploaded" style={{ fontSize: 13 }}>Freeze uploaded features</label>
+            </div>
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                id="invert-latlon"
+                checked={!!invertLatLon}
+                onChange={(e) => setInvertLatLon(e.target.checked)}
+              />
+              <label htmlFor="invert-latlon" style={{ fontSize: 13 }}>Invertir Lat/Lon</label>
             </div>
           </div>
 
@@ -161,6 +183,24 @@ const Sidebar: React.FC<SidebarProps> = ({
             max={100}
             step={1}
             onChange={onMaxEscuelasChange}
+          />
+
+          <h4 style={{ marginTop: 6, marginBottom: 6 }}>Hexagon controls</h4>
+          <Slider
+            label="Hex radius (m)"
+            value={hexRadius}
+            min={20}
+            max={1000}
+            step={10}
+            onChange={onHexRadiusChange}
+          />
+          <Slider
+            label="Elevation scale"
+            value={hexElevationScale}
+            min={0}
+            max={3000}
+            step={50}
+            onChange={onHexElevationScaleChange}
           />
         </div>
       </section>

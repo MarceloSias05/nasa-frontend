@@ -3,6 +3,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import MapView from "./components/MapView";
 import Sidebar from "./components/Sidebar/Sidebar";
 import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { HexagonLayer } from '@deck.gl/aggregation-layers';
 import { ScenegraphLayer } from "@deck.gl/mesh-layers";
 import type {
   FeatureCollection,
@@ -20,9 +21,12 @@ import { clampViewState, generateGridLines } from "./utils/mapUtils";
 import { geocode } from "./services/geocoding";
 import type { GeocodeResult } from "./services/geocoding";
 import { useAreaAnalysis } from "./hooks/useAreaAnalysis";
+import usePopulation from './hooks/usePopulation';
+// removed unused urbanQuality import
 // removed unused polygonToLatLon import
 import { parseLatLonCsv, coordsToPolygonFeatureCollection } from "./utils/csv";
 import { parseWktsToFeatureCollection } from "./utils/wkt";
+import HistoryPage from './components/HistoryPage';
 
 export default function App(): React.ReactElement {
   // ---------- STATE ----------
@@ -41,6 +45,10 @@ export default function App(): React.ReactElement {
   const [budget, setBudget] = useState<number>(300000);
   const [maxParques, setMaxParques] = useState<number>(10);
   const [maxEscuelas, setMaxEscuelas] = useState<number>(10);
+
+  // Hexagon visualization controls
+  const [hexRadius, setHexRadius] = useState<number>(80);
+  const [hexElevationScale, setHexElevationScale] = useState<number>(300);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -69,6 +77,105 @@ export default function App(): React.ReactElement {
   const [freezeUploaded, setFreezeUploaded] = useState<boolean>(false);
 
   const { analyzeArea, loading, error } = useAreaAnalysis();
+  const [apiPopulationEnabled, setApiPopulationEnabled] = useState<boolean>(false);
+
+  // derive bbox from MAP_BOUNDS: [[w,s],[e,n]]
+  const [[wBound, sBound], [eBound, nBound]] = MAP_BOUNDS as any;
+  const { data: apiPopulation } = usePopulation(sBound, nBound, wBound, eBound);
+
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [showSaveModal, setShowSaveModal] = useState<boolean>(false);
+  const [saveNote, setSaveNote] = useState<string>('');
+
+  // loadPopulation replaced by API-driven loading via usePopulation + effect
+
+  // When API population is enabled and data arrives, build a HexagonLayer
+  useEffect(() => {
+    try {
+      if (!apiPopulation || !apiPopulationEnabled) return;
+      const pts = (apiPopulation || []).filter((r: any) => Number.isFinite(r.lon) && Number.isFinite(r.lat))
+        .map((r: any) => ({ position: [Number(r.lon), Number(r.lat)], pob: Number(r.POBTOT ?? r.pobtot ?? 0) }));
+
+      if (!pts.length) return;
+
+      // Green color ramp from light (low) to dark (high)
+      const colorRange = [
+        [232, 245, 233], // green50
+        [200, 230, 201], // green100
+        [165, 214, 167], // green200
+        [129, 199, 132], // green300
+        [102, 187, 106], // green400
+        [76, 175, 80],   // green500
+        [56, 142, 60],   // green600
+        [46, 125, 50],   // green700
+        [27, 94, 32]     // green900 (dark)
+      ];
+
+      const getWeight = (d: any) => Math.log10((d.pob || 0) + 1);
+
+      const hexLayer = new HexagonLayer({
+        id: 'population-hex-api',
+        data: pts,
+        getPosition: (d: any) => d.position,
+        getWeight,
+        radius: hexRadius,
+  elevationRange: [0, 1000],
+        elevationScale: is3D ? hexElevationScale : 0,
+        extruded: !!is3D,
+        colorRange,
+        opacity: 0.95,
+        pickable: true,
+        lowerPercentile: 5,
+        upperPercentile: 100,
+        coverage: 1,
+      });
+      setCustomLayer(hexLayer);
+    } catch (e) {
+      console.warn('Error building hex layer from API data', e);
+    }
+  }, [apiPopulation, apiPopulationEnabled, hexRadius, hexElevationScale, is3D]);
+
+  const saveHistory = (note?: string) => {
+    try {
+      const key = 'urban_history_v1';
+      const raw = localStorage.getItem(key);
+      const arr = raw ? JSON.parse(raw) : [];
+      const entry = { ts: new Date().toISOString(), note: note || 'snapshot', view: viewState };
+      arr.push(entry);
+      localStorage.setItem(key, JSON.stringify(arr));
+      // quick toast-like confirmation
+      try {
+        // create ephemeral element
+        const el = document.createElement('div');
+        el.textContent = 'Historial guardado';
+        Object.assign(el.style, { position: 'fixed', bottom: '18px', right: '18px', background: '#0b74c9', color: '#fff', padding: '8px 12px', borderRadius: '6px', zIndex: 9999 });
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 1800);
+      } catch {}
+    } catch (e) {
+      console.error('saveHistory error', e);
+    }
+  };
+
+  const submitHistory = async () => {
+    const entry = { ts: new Date().toISOString(), note: saveNote || 'snapshot', view: viewState };
+    try {
+      // try sending to backend
+      await (await import('./api')).postHistory(entry);
+      // success toast
+      const el = document.createElement('div');
+      el.textContent = 'Enviado al servidor';
+      Object.assign(el.style, { position: 'fixed', bottom: '18px', right: '18px', background: '#2e7d32', color: '#fff', padding: '8px 12px', borderRadius: '6px', zIndex: 9999 });
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 1800);
+    } catch (e) {
+      // fallback to localStorage
+      saveHistory(saveNote || 'snapshot');
+    } finally {
+      setShowSaveModal(false);
+      setSaveNote('');
+    }
+  };
 
   // Normalize feature collections to the current view center (stable via useCallback)
   const normalizeFeatureCollectionToView = React.useCallback(
@@ -480,11 +587,29 @@ export default function App(): React.ReactElement {
   };
 
   // ---------- RENDER ----------
+  if (!isAuthenticated) {
+    const Login = require('./components/Login').default;
+    return <Login onLogin={() => setIsAuthenticated(true)} />;
+  }
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
       <Sidebar
         active={activeVis}
-        onSelect={setActiveVis}
+        onSelect={(key: string) => {
+          if (key === 'load-population') {
+            // zoom out to minimum before loading
+            setViewState((vs: any) => clampViewState({ ...vs, zoom: (INITIAL_VIEW_STATE as any).minZoom }));
+            // enable API population loader (will populate customLayer via effect)
+            setApiPopulationEnabled(true);
+            return;
+          }
+          if (key === 'save-history') {
+            // open modal to ask for a note before saving
+            setShowSaveModal(true);
+            return;
+          }
+          setActiveVis(key);
+        }}
         layer={layer}
         onLayerChange={setLayer}
         cellSize={cellSize}
@@ -502,106 +627,135 @@ export default function App(): React.ReactElement {
         onCsvPolygonLoaded={handleCsvPolygonLoaded}
         freezeUploaded={freezeUploaded}
         onFreezeToggle={(v: boolean) => setFreezeUploaded(v)}
+        hexRadius={hexRadius}
+        onHexRadiusChange={setHexRadius}
+        hexElevationScale={hexElevationScale}
+        onHexElevationScaleChange={setHexElevationScale}
+        onLoadHistoryEntry={(entry: any) => {
+          try {
+            if (entry && entry.view) {
+              setViewState({ ...viewState, ...entry.view });
+            }
+          } catch (e) {}
+        }}
       />
 
       <div style={{ position: "relative", flex: 1 }}>
-        <MapView
-          viewState={viewState}
-          onViewStateChange={(vs: any) => setViewState(clampViewState(vs))}
-          layers={layers}
-          mapMode={mapMode}
-          is3D={is3D}
-          onMapLoad={onMapLoad}
-          onFeatureClick={(features, map, clickInfo) => {
-            try {
-              if (!features || !features.length) {
-                setFeaturePopup(null);
-                return;
-              }
-              const f = features[0];
-              // If this feature is one of our bbox placeholders, load full polygon
-              const wktId = f?.properties && f.properties.__wkt_id;
-              if (wktId && wktIndex && wktIndex.records && wktIndex.records[wktId]) {
-                const full = wktIndex.records[wktId];
-                const fullNorm = normalizeFeatureCollectionToView(full, viewState?.longitude);
-                const layer = new GeoJsonLayer({
-                  id: `wkt-selected-${wktId}`,
-                  data: fullNorm,
-                  filled: true,
-                  getFillColor: [0, 200, 0, 120],
-                  stroked: true,
-                  getLineColor: [0, 120, 255, 255],
-                  lineWidthMinPixels: 2,
-                  pickable: true,
-                  wrapLongitude: false,
-                  parameters: { depthTest: false },
-                });
-                // replace bbox layer with selected detailed layer
-                setCsvPolygonLayer(layer);
-                // remove bbox fc to avoid confusion in UI
-                setWktIndex({ ...(wktIndex || {}), bboxFeatureCollection: null });
-                return;
-              }
-              const name =
-                (f.properties && (f.properties.name || f.properties.label || f.properties.title)) ||
-                f.text ||
-                f.place_name ||
-                (f.properties && JSON.stringify(f.properties)) ||
-                "Feature";
-              // Derive a safe [lon, lat]
-              let lon: number = viewState.longitude;
-              let lat: number = viewState.latitude;
-              const clickCoord = (clickInfo && (clickInfo.coordinate || clickInfo.lngLat)) || null;
-              if (
-                Array.isArray(clickCoord) &&
-                typeof clickCoord[0] === "number" &&
-                typeof clickCoord[1] === "number"
-              ) {
-                lon = clickCoord[0];
-                lat = clickCoord[1];
-              } else {
-                const geom = f && f.geometry;
-                const coords = geom && (geom as any).coordinates;
+        {showSaveModal && (
+          <div style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 420, background: '#fff', padding: 16, borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,0.3)' }}>
+              <h3 style={{ marginTop: 0 }}>Guardar historial</h3>
+              <div style={{ marginBottom: 8 }}>
+                <input value={saveNote} onChange={(e) => setSaveNote(e.target.value)} placeholder="Nota (opcional)" style={{ width: '100%', padding: '8px 10px' }} />
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => { setShowSaveModal(false); setSaveNote(''); }}>Cancelar</button>
+                <button onClick={() => submitHistory()} style={{ background: '#0b74c9', color: '#fff' }}>Guardar</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {activeVis === 'history' ? (
+          <HistoryPage onOpen={(entry: any) => { try { if (entry && entry.view) setViewState({ ...viewState, ...entry.view }); } catch {} }} />
+        ) : (
+          <MapView
+            viewState={viewState}
+            onViewStateChange={(vs: any) => setViewState(clampViewState(vs))}
+            layers={layers}
+            mapMode={mapMode}
+            is3D={is3D}
+            onMapLoad={onMapLoad}
+            onFeatureClick={(features, map, clickInfo) => {
+              try {
+                if (!features || !features.length) {
+                  setFeaturePopup(null);
+                  return;
+                }
+                const f = features[0];
+                // If this feature is one of our bbox placeholders, load full polygon
+                const wktId = f?.properties && f.properties.__wkt_id;
+                if (wktId && wktIndex && wktIndex.records && wktIndex.records[wktId]) {
+                  const full = wktIndex.records[wktId];
+                  const fullNorm = normalizeFeatureCollectionToView(full, viewState?.longitude);
+                  const layer = new GeoJsonLayer({
+                    id: `wkt-selected-${wktId}`,
+                    data: fullNorm,
+                    filled: true,
+                    getFillColor: [0, 200, 0, 120],
+                    stroked: true,
+                    getLineColor: [0, 120, 255, 255],
+                    lineWidthMinPixels: 2,
+                    pickable: true,
+                    wrapLongitude: false,
+                    parameters: { depthTest: false },
+                  });
+                  // replace bbox layer with selected detailed layer
+                  setCsvPolygonLayer(layer);
+                  // remove bbox fc to avoid confusion in UI
+                  setWktIndex({ ...(wktIndex || {}), bboxFeatureCollection: null });
+                  return;
+                }
+                const name =
+                  (f.properties && (f.properties.name || f.properties.label || f.properties.title)) ||
+                  f.text ||
+                  f.place_name ||
+                  (f.properties && JSON.stringify(f.properties)) ||
+                  "Feature";
+                // Derive a safe [lon, lat]
+                let lon: number = viewState.longitude;
+                let lat: number = viewState.latitude;
+                const clickCoord = (clickInfo && (clickInfo.coordinate || clickInfo.lngLat)) || null;
                 if (
-                  geom && (geom as any).type === "Point" &&
-                  Array.isArray(coords) &&
-                  typeof coords[0] === "number" &&
-                  typeof coords[1] === "number"
+                  Array.isArray(clickCoord) &&
+                  typeof clickCoord[0] === "number" &&
+                  typeof clickCoord[1] === "number"
                 ) {
-                  lon = coords[0];
-                  lat = coords[1];
+                  lon = clickCoord[0];
+                  lat = clickCoord[1];
+                } else {
+                  const geom = f && f.geometry;
+                  const coords = geom && (geom as any).coordinates;
+                  if (
+                    geom && (geom as any).type === "Point" &&
+                    Array.isArray(coords) &&
+                    typeof coords[0] === "number" &&
+                    typeof coords[1] === "number"
+                  ) {
+                    lon = coords[0];
+                    lat = coords[1];
+                  }
                 }
-              }
 
-              let px: number | null = null;
-              let py: number | null = null;
-              if (clickInfo && typeof clickInfo.x === "number" && typeof clickInfo.y === "number") {
-                px = clickInfo.x;
-                py = clickInfo.y;
-              } else if (map && typeof map.project === "function") {
-                try {
-                  const p = map.project([lon, lat]);
-                  px = p.x;
-                  py = p.y;
-                } catch {
-                  px = null;
+                let px: number | null = null;
+                let py: number | null = null;
+                if (clickInfo && typeof clickInfo.x === "number" && typeof clickInfo.y === "number") {
+                  px = clickInfo.x;
+                  py = clickInfo.y;
+                } else if (map && typeof map.project === "function") {
+                  try {
+                    const p = map.project([lon, lat]);
+                    px = p.x;
+                    py = p.y;
+                  } catch {
+                    px = null;
+                  }
                 }
-              }
 
-              setFeaturePopup({
-                lng: Number(lon),
-                lat: Number(lat),
-                title: name,
-                details: f,
-                screenX: px ?? 12,
-                screenY: py ?? 72,
-              } as any);
-            } catch {
-              setFeaturePopup(null);
-            }
-          }}
-          onAreaDrawn={handleAreaSelected}
-        />
+                setFeaturePopup({
+                  lng: Number(lon),
+                  lat: Number(lat),
+                  title: name,
+                  details: f,
+                  screenX: px ?? 12,
+                  screenY: py ?? 72,
+                } as any);
+              } catch {
+                setFeaturePopup(null);
+              }
+            }}
+            onAreaDrawn={handleAreaSelected}
+          />
+        )}
 
         {/* Loading / Error overlays */}
         {loading && (
@@ -739,6 +893,17 @@ export default function App(): React.ReactElement {
               }
             >
               -
+            </button>
+            <button
+              onClick={() => {
+                // logout
+                setIsAuthenticated(false);
+                // reset view
+                setViewState(INITIAL_VIEW_STATE as any);
+              }}
+              style={{ background: '#ef5350', color: '#fff' }}
+            >
+              Logout
             </button>
             {/* Horizontal longitude slider: move map left/right */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 8 }}>

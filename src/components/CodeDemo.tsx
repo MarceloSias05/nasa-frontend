@@ -8,23 +8,28 @@ const CodeDemo: React.FC = () => {
     <div className="flex h-screen flex-col">
       <Header />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar active={''} onSelect={function (key: string): void {
-                  throw new Error('Function not implemented.');
-              } } layer={''} onLayerChange={function (value: string): void {
-                  throw new Error('Function not implemented.');
-              } } cellSize={0} onCellSizeChange={function (value: number): void {
-                  throw new Error('Function not implemented.');
-              } } clusterRadius={0} onClusterRadiusChange={function (value: number): void {
-                  throw new Error('Function not implemented.');
-              } } maxHeight={0} onMaxHeightChange={function (value: number): void {
-                  throw new Error('Function not implemented.');
-              } } budget={0} onBudgetChange={function (value: number): void {
-                  throw new Error('Function not implemented.');
-              } } maxParques={0} onMaxParquesChange={function (value: number): void {
-                  throw new Error('Function not implemented.');
-              } } maxEscuelas={0} onMaxEscuelasChange={function (value: number): void {
-                  throw new Error('Function not implemented.');
-              } } />
+    <Sidebar
+      active={''}
+      onSelect={() => {}}
+      layer={''}
+      onLayerChange={() => {}}
+      cellSize={0}
+      onCellSizeChange={() => {}}
+      clusterRadius={0}
+      onClusterRadiusChange={() => {}}
+      maxHeight={0}
+      onMaxHeightChange={() => {}}
+      budget={0}
+      onBudgetChange={() => {}}
+      maxParques={0}
+      onMaxParquesChange={() => {}}
+      maxEscuelas={10}
+      onMaxEscuelasChange={() => {}}
+      hexRadius={150}
+      onHexRadiusChange={() => {}}
+      hexElevationScale={1200}
+      onHexElevationScaleChange={() => {}}
+    />
         <MainView />
       </div>
     </div>

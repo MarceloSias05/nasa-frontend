@@ -5,10 +5,12 @@ export const HUMAN_MODEL_URL = 'https://raw.githubusercontent.com/KhronosGroup/g
 export const INITIAL_VIEW_STATE = {
   longitude: -100.3161,
   latitude: 25.6866,
-  zoom: 11,
-  pitch: 45,
+  // Lower the zoom to view from higher altitude (see more area)
+  zoom: 9,
+  // Reasonable pitch to tilt the camera toward the horizon (0 = top-down)
+  pitch: 60,
   bearing: 0,
-  minZoom: 12,
+  minZoom: 5,
   maxZoom: 20,
 };
 
