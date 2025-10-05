@@ -18,6 +18,12 @@ const CodeDemo: React.FC = () => {
                   throw new Error('Function not implemented.');
               } } maxHeight={0} onMaxHeightChange={function (value: number): void {
                   throw new Error('Function not implemented.');
+              } } budget={0} onBudgetChange={function (value: number): void {
+                  throw new Error('Function not implemented.');
+              } } maxParques={0} onMaxParquesChange={function (value: number): void {
+                  throw new Error('Function not implemented.');
+              } } maxEscuelas={0} onMaxEscuelasChange={function (value: number): void {
+                  throw new Error('Function not implemented.');
               } } />
         <MainView />
       </div>

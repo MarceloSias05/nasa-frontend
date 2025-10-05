@@ -57,9 +57,18 @@ interface SidebarProps {
   onClusterRadiusChange: (value: number) => void;
   maxHeight: number;
   onMaxHeightChange: (value: number) => void;
+  // New parameters
+  budget: number;
+  onBudgetChange: (value: number) => void;
+  maxParques: number;
+  onMaxParquesChange: (value: number) => void;
+  maxEscuelas: number;
+  onMaxEscuelasChange: (value: number) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
+const Sidebar: React.FC<SidebarProps> = ({ active, onSelect, budget, onBudgetChange, maxParques, onMaxParquesChange, maxEscuelas, onMaxEscuelasChange }) => {
+  const formatCurrency = (v: number) =>
+    new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(v);
   return (
     <div className="sidebar">
       <div className="sidebar-header">Nasa Space Apps</div>
@@ -76,7 +85,60 @@ const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
         ))}
       </nav>
       <div className="sidebar-footer">
-        {/* Aquí botones adicionales, toggles, etc */}
+        <div style={{ padding: '12px 10px' }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Parámetros</div>
+
+          {/* Presupuesto */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+              <span>Presupuesto</span>
+              <span>{formatCurrency(budget)}</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={1000000}
+              step={10000}
+              value={budget}
+              onChange={(e) => onBudgetChange(Number(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          {/* Nº máximo de parques */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+              <span>Nº máx. de parques</span>
+              <span>{maxParques}</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={maxParques}
+              onChange={(e) => onMaxParquesChange(Number(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          {/* Nº máximo de escuelas */}
+          <div style={{ marginBottom: 4 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+              <span>Nº máx. de escuelas</span>
+              <span>{maxEscuelas}</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={maxEscuelas}
+              onChange={(e) => onMaxEscuelasChange(Number(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

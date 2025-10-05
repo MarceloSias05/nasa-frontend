@@ -25,6 +25,10 @@ export default function App(): React.ReactElement {
   const [cellSize, setCellSize] = useState<number>(50);
   const [clusterRadius, setClusterRadius] = useState<number>(75);
   const [maxHeight, setMaxHeight] = useState<number>(25);
+  // New optimization parameters
+  const [budget, setBudget] = useState<number>(300000);
+  const [maxParques, setMaxParques] = useState<number>(10);
+  const [maxEscuelas, setMaxEscuelas] = useState<number>(10);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -260,6 +264,12 @@ export default function App(): React.ReactElement {
         onClusterRadiusChange={setClusterRadius}
         maxHeight={maxHeight}
         onMaxHeightChange={setMaxHeight}
+        budget={budget}
+        onBudgetChange={setBudget}
+        maxParques={maxParques}
+        onMaxParquesChange={setMaxParques}
+        maxEscuelas={maxEscuelas}
+        onMaxEscuelasChange={setMaxEscuelas}
       />
 
       <div style={{ position: "relative", flex: 1 }}>
