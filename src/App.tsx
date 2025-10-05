@@ -64,50 +64,50 @@ export default function App(): React.ReactElement {
     bboxFeatureCollection: FeatureCollection<Geometry> | null;
     records: Record<string, any>;
   } | null>(null);
-  const [wktSelectedLayer, setWktSelectedLayer] = useState<any | null>(null);
+  // removed unused wktSelectedLayer state
+  const [originalCsvFc, setOriginalCsvFc] = useState<any | null>(null);
+  const [freezeUploaded, setFreezeUploaded] = useState<boolean>(false);
 
   const { analyzeArea, loading, error } = useAreaAnalysis();
 
-  // Normalize longitudes so features stay tied to the current world copy
-  const normalizeLon = (lon: number, centerLon: number) => {
-    if (!Number.isFinite(lon) || !Number.isFinite(centerLon)) return lon;
-    // shift lon by multiples of 360 to be closest to centerLon
-    let out = lon;
-    while (out - centerLon > 180) out -= 360;
-    while (out - centerLon < -180) out += 360;
-    return out;
-  };
-
-  const normalizeFeatureCollectionToView = (
-    fc: any,
-    centerLon: number | undefined
-  ) => {
-    if (!fc || !fc.features || typeof centerLon !== 'number') return fc;
-    try {
-      const copy = { ...fc, features: fc.features.map((f: any) => ({ ...f })) };
-      copy.features = copy.features.map((f: any) => {
-        if (!f || !f.geometry) return f;
-        const geom = f.geometry;
-        const normCoords = (coords: any): any => {
-          if (typeof coords[0] === 'number' && typeof coords[1] === 'number') {
-            const lon = Number(coords[0]);
-            const lat = Number(coords[1]);
-            return [normalizeLon(lon, centerLon), lat];
+  // Normalize feature collections to the current view center (stable via useCallback)
+  const normalizeFeatureCollectionToView = React.useCallback(
+    (fc: any, centerLon: number | undefined) => {
+      const normalizeLon = (lon: number, centerLonInner: number) => {
+        if (!Number.isFinite(lon) || !Number.isFinite(centerLonInner)) return lon;
+        let out = lon;
+        while (out - centerLonInner > 180) out -= 360;
+        while (out - centerLonInner < -180) out += 360;
+        return out;
+      };
+      if (!fc || !fc.features || typeof centerLon !== 'number') return fc;
+      try {
+        const copy = { ...fc, features: fc.features.map((f: any) => ({ ...f })) };
+        copy.features = copy.features.map((f: any) => {
+          if (!f || !f.geometry) return f;
+          const geom = f.geometry;
+          const normCoords = (coords: any): any => {
+            if (typeof coords[0] === 'number' && typeof coords[1] === 'number') {
+              const lon = Number(coords[0]);
+              const lat = Number(coords[1]);
+              return [normalizeLon(lon, centerLon), lat];
+            }
+            return coords.map((c: any) => normCoords(c));
+          };
+          try {
+            const ng = { ...geom, coordinates: normCoords(geom.coordinates) };
+            return { ...f, geometry: ng };
+          } catch {
+            return f;
           }
-          return coords.map((c: any) => normCoords(c));
-        };
-        try {
-          const ng = { ...geom, coordinates: normCoords(geom.coordinates) };
-          return { ...f, geometry: ng };
-        } catch {
-          return f;
-        }
-      });
-      return copy;
-    } catch {
-      return fc;
-    }
-  };
+        });
+        return copy;
+      } catch {
+        return fc;
+      }
+    },
+    []
+  );
 
   // ---------- ANIMATION ----------
   useEffect(() => {
@@ -120,6 +120,53 @@ export default function App(): React.ReactElement {
     return () => { if (raf) cancelAnimationFrame(raf); };
   }, [selectedResult, featurePopup]);
 
+  // Re-normalize and rebuild CSV / WKT-bbox layer when view center changes
+  useEffect(() => {
+    try {
+      // If freeze is enabled, do not re-normalize or rebuild layers
+      if (freezeUploaded) return;
+
+      // If there's an original CSV feature collection, rebuild polygon layer
+      if (originalCsvFc) {
+        const fcNorm = normalizeFeatureCollectionToView(originalCsvFc, viewState?.longitude);
+        const layer = new GeoJsonLayer({
+          id: 'csv-polygon',
+          data: fcNorm,
+          filled: true,
+          getFillColor: [0, 200, 0, 120],
+          stroked: true,
+          getLineColor: [0, 120, 255, 255],
+          lineWidthMinPixels: 2,
+          pickable: true,
+          wrapLongitude: false,
+          parameters: { depthTest: false },
+        });
+        setCsvPolygonLayer(layer);
+        return;
+  }
+
+      // Otherwise if we have a WKT bbox collection, rebuild that layer normalized to view
+      if (wktIndex && wktIndex.bboxFeatureCollection) {
+        const bboxNorm = normalizeFeatureCollectionToView(wktIndex.bboxFeatureCollection, viewState?.longitude);
+        const layer = new GeoJsonLayer({
+          id: 'wkt-bboxes',
+          data: bboxNorm,
+          filled: true,
+          getFillColor: [0, 200, 0, 30],
+          stroked: true,
+          getLineColor: [0, 120, 255, 180],
+          lineWidthMinPixels: 1,
+          wrapLongitude: false,
+          pickable: true,
+        });
+        setCsvPolygonLayer(layer);
+      }
+    } catch (err) {
+      // swallow errors in normalization effect
+      // console.warn('Normalization effect error', err);
+    }
+  }, [viewState?.longitude, originalCsvFc, wktIndex, normalizeFeatureCollectionToView, freezeUploaded]);
+
   // ---------- BASE LAYER ----------
   const baseLayer = useMemo(
     () =>
@@ -131,7 +178,7 @@ export default function App(): React.ReactElement {
         getElevation: (f: any) => (is3D ? f.properties.valuePerSqm * 0.1 : 0),
         getFillColor: [255, 140, 0, 180],
         pickable: true,
-        wrapLongitude: false,
+  wrapLongitude: false,
       }),
     [is3D]
   );
@@ -156,7 +203,7 @@ export default function App(): React.ReactElement {
         getLineColor: [255, 0, 0, 80],
         lineWidthUnits: "pixels",
         getLineWidth: 1,
-        wrapLongitude: false,
+  wrapLongitude: false,
         pickable: false,
       })
     );
@@ -185,7 +232,7 @@ export default function App(): React.ReactElement {
         pointRadiusMinPixels: 6,
         getFillColor: [0, 120, 255, 200],
         stroked: true,
-        wrapLongitude: false,
+  wrapLongitude: false,
       })
     );
   }
@@ -213,7 +260,7 @@ export default function App(): React.ReactElement {
         getLineColor: [255, 255, 255, 230],
         getLineWidth: 2,
         pickable: false,
-          wrapLongitude: false,
+  wrapLongitude: false,
       }),
       new ScatterplotLayer({
         id: "highlight-pulse",
@@ -226,7 +273,7 @@ export default function App(): React.ReactElement {
         getLineColor: [0, 120, 255, Math.max(20, Math.floor((1 - phase) * 180))],
         getLineWidth: 2,
         updateTriggers: { getRadius: [phase], getLineColor: [phase] },
-        pickable: false,
+           pickable: false,
           wrapLongitude: false,
       })
     );
@@ -359,8 +406,7 @@ export default function App(): React.ReactElement {
         });
         setWktIndex({ bboxFeatureCollection: bboxFc, records });
         setCsvPolygonLayer(bboxLayer);
-        // clear any selected detailed polygon
-        setWktSelectedLayer(null);
+  // clear any selected detailed polygon (no-op)
         return;
       }
 
@@ -373,8 +419,10 @@ export default function App(): React.ReactElement {
         return;
       }
       const fixed = options?.invert ? coords.map(([lon, lat]) => [lat, lon] as [number, number]) : coords;
-      const fc = coordsToPolygonFeatureCollection(fixed);
-      const fcNorm = normalizeFeatureCollectionToView(fc, viewState?.longitude);
+  const fc = coordsToPolygonFeatureCollection(fixed);
+  // keep original fc so we can re-normalize on view changes
+  setOriginalCsvFc(fc);
+  const fcNorm = normalizeFeatureCollectionToView(fc, viewState?.longitude);
       const layer = new GeoJsonLayer({
         id: 'csv-polygon',
         data: fcNorm,
@@ -452,6 +500,8 @@ export default function App(): React.ReactElement {
         maxEscuelas={maxEscuelas}
         onMaxEscuelasChange={setMaxEscuelas}
         onCsvPolygonLoaded={handleCsvPolygonLoaded}
+        freezeUploaded={freezeUploaded}
+        onFreezeToggle={(v: boolean) => setFreezeUploaded(v)}
       />
 
       <div style={{ position: "relative", flex: 1 }}>
@@ -486,7 +536,6 @@ export default function App(): React.ReactElement {
                   wrapLongitude: false,
                   parameters: { depthTest: false },
                 });
-                setWktSelectedLayer(layer);
                 // replace bbox layer with selected detailed layer
                 setCsvPolygonLayer(layer);
                 // remove bbox fc to avoid confusion in UI
@@ -691,6 +740,43 @@ export default function App(): React.ReactElement {
             >
               -
             </button>
+            {/* Horizontal longitude slider: move map left/right */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 8 }}>
+              <label style={{ fontSize: 12, color: '#333' }}>Lon</label>
+              <input
+                type="range"
+                min={-100.3005}
+                max={-100.1830}
+                step={0.0001}
+                value={typeof viewState.longitude === 'number' ? Math.max(-100.3005, Math.min(-100.1830, viewState.longitude)) : (INITIAL_VIEW_STATE as any).longitude}
+                onChange={(e) => {
+                  const lonRaw = Number(e.target.value);
+                  const lon = Math.max(-100.3005, Math.min(-100.1830, lonRaw));
+                  setViewState(clampViewState({ ...viewState, longitude: lon }));
+                }}
+                style={{ width: 180 }}
+              />
+              <div style={{ minWidth: 72, fontSize: 12, color: '#333' }}>{(Math.max(-100.3005, Math.min(-100.1830, viewState.longitude ?? (INITIAL_VIEW_STATE as any).longitude))).toFixed(4)}</div>
+            </div>
+
+            {/* Horizontal latitude slider: move map up/down (bounded by specific limits) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 8 }}>
+              <label style={{ fontSize: 12, color: '#333' }}>Lat</label>
+              <input
+                type="range"
+                min={25.6182}
+                max={25.7156}
+                step={0.0001}
+                value={typeof viewState.latitude === 'number' ? Math.max(25.6182, Math.min(25.7156, viewState.latitude)) : (INITIAL_VIEW_STATE as any).latitude}
+                onChange={(e) => {
+                  const latRaw = Number(e.target.value);
+                  const lat = Math.max(25.6182, Math.min(25.7156, latRaw));
+                  setViewState(clampViewState({ ...viewState, latitude: lat }));
+                }}
+                style={{ width: 180 }}
+              />
+              <div style={{ minWidth: 72, fontSize: 12, color: '#333' }}>{(Math.max(25.6182, Math.min(25.7156, viewState.latitude ?? (INITIAL_VIEW_STATE as any).latitude))).toFixed(4)}</div>
+            </div>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
                 type="checkbox"

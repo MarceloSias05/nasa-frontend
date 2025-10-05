@@ -36,6 +36,8 @@ interface SidebarProps {
   maxEscuelas: number;
   onMaxEscuelasChange: (value: number) => void;
   onCsvPolygonLoaded?: (csvText: string, options?: { invert?: boolean }) => void;
+  freezeUploaded?: boolean;
+  onFreezeToggle?: (v: boolean) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -48,6 +50,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   maxEscuelas,
   onMaxEscuelasChange,
   onCsvPolygonLoaded,
+  freezeUploaded,
+  onFreezeToggle,
 }) => {
   const [invertLatLon, setInvertLatLon] = useState(false);
   const formatCurrency = (v: number) =>
@@ -119,7 +123,15 @@ const Sidebar: React.FC<SidebarProps> = ({
               onChange={(e) => e.target.files?.[0] && handleFileLoad(e.target.files[0])}
               style={{ width: "100%" }}
             />
-            
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                id="freeze-uploaded"
+                checked={!!freezeUploaded}
+                onChange={(e) => onFreezeToggle && onFreezeToggle(e.target.checked)}
+              />
+              <label htmlFor="freeze-uploaded" style={{ fontSize: 13 }}>Freeze uploaded features</label>
+            </div>
           </div>
 
           {/* ---- Sliders ---- */}
