@@ -1,313 +1,124 @@
-import React, { useState } from "react";
-import DeckGL from "@deck.gl/react";
-import { GeoJsonLayer } from "@deck.gl/layers";
-import StaticMap from "react-map-gl/maplibre";
-import maplibregl from "maplibre-gl";
-import { WebMercatorViewport } from '@deck.gl/core';
+import React, { useMemo, useState } from 'react';
+import MapView from './components/MapView';
+import { GeoJsonLayer } from '@deck.gl/layers';
+import { ScenegraphLayer } from '@deck.gl/mesh-layers';
+import { MAP_BOUNDS, HUMAN_MODEL_URL, INITIAL_VIEW_STATE, CELL_SIZE_KM } from './config';
+import { clampViewState, generateGridLines } from './utils/mapUtils';
+import { geocode } from './services/geocoding';
 
-const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
-
-const INITIAL_VIEW_STATE = {
-  longitude: -100.316116 , // MTY
-  latitude: 25.686613,
-  zoom: 11,
-  pitch: 45,
-  bearing: 0,
-  minZoom: 10,
-  maxZoom: 16,
-};
-
-const MAP_BOUNDS = [
-  [-100.5, 25.4], // suroeste
-  [-100.1, 25.9], // noreste
-];
-
-function App() {
-  // If the user hasn't set a MapTiler key, fall back to a public demo style.
-  const mapStyle = MAPTILER_KEY
-    ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
-    : "https://demotiles.maplibre.org/style.json";
-
+export default function App(): React.ReactElement {
+  const [mapMode, setMapMode] = useState<'streets' | 'satellite'>('streets');
   const [is3D, setIs3D] = useState(true);
-  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
+  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE as any);
   const [showGrid, setShowGrid] = useState(false);
-  const [fixedGrid, setFixedGrid] = useState(true);
-  const [size, setSize] = useState({ width: typeof window !== 'undefined' ? window.innerWidth : 800, height: typeof window !== 'undefined' ? window.innerHeight : 600 });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  // searchResults state removed (no UI yet). Keep selectedResult for marker.
+  const [selectedResult, setSelectedResult] = useState<any | null>(null);
+  const [streetViewOpen, setStreetViewOpen] = useState(false);
+  const [streetViewCoords, setStreetViewCoords] = useState<[number, number] | null>(null);
+  const [showHuman3D, setShowHuman3D] = useState(false);
+  const [humanCoords, setHumanCoords] = useState<[number, number] | null>(null);
 
-  // update size on window resize so grid covers the visible area
-  React.useEffect(() => {
-    const handler = () => setSize({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
+  const baseLayer = useMemo(
+    () =>
+      new GeoJsonLayer({ id: 'base-layer', data: 'https://raw.githubusercontent.com/visgl/deck.gl-data/master/examples/geojson/vancouver-blocks.json', filled: is3D, extruded: is3D, getElevation: (f: any) => (is3D ? f.properties.valuePerSqm * 0.1 : 0), getFillColor: [255, 140, 0, 180], pickable: true }),
+    [is3D]
+  );
 
-  // Clamp a viewState's center to MAP_BOUNDS (format: [[west,south],[east,north]])
-  const clampViewState = (vs: any) => {
-    try {
-      const lon = typeof vs.longitude === 'number' ? vs.longitude : INITIAL_VIEW_STATE.longitude;
-      const lat = typeof vs.latitude === 'number' ? vs.latitude : INITIAL_VIEW_STATE.latitude;
-      const [[west, south], [east, north]] = MAP_BOUNDS;
+  const layers: any[] = [baseLayer];
 
-      const clampedLon = Math.max(Math.min(lon, east), west);
-      const clampedLat = Math.max(Math.min(lat, north), south);
+  const gridData = useMemo(() => {
+    if (!showGrid) return null;
+    const [[w, s], [e, n]] = MAP_BOUNDS as any;
+    const padCells = Math.max(20, Math.round(100 / Math.max(1, viewState.zoom || INITIAL_VIEW_STATE.zoom)));
+    const latPad = ((CELL_SIZE_KM * 1000) / 111320) * padCells;
+    const metersPerDegLon = Math.abs(Math.cos((viewState.latitude * Math.PI) / 180) * 111320);
+    const lonPad = ((CELL_SIZE_KM * 1000) / metersPerDegLon) * padCells;
+    const bigBounds = [[w - lonPad, s - latPad], [e + lonPad, n + latPad]];
+    return generateGridLines(bigBounds, CELL_SIZE_KM, viewState.latitude || INITIAL_VIEW_STATE.latitude, true, 0);
+  }, [showGrid, viewState.zoom, viewState.latitude]);
 
-      return {
-        ...vs,
-        longitude: clampedLon,
-        latitude: clampedLat,
-      };
-    } catch (err) {
-      return vs;
-    }
-  };
+  if (showGrid && gridData) layers.push(new GeoJsonLayer({ id: 'grid-layer', data: gridData, stroked: true, filled: false, getLineColor: [255, 0, 0, 80], lineWidthUnits: 'pixels', getLineWidth: 1, pickable: false } as any));
 
-  const baseLayer = new GeoJsonLayer({
-    id: "base-layer",
-    data: "https://raw.githubusercontent.com/visgl/deck.gl-data/master/examples/geojson/vancouver-blocks.json",
-    filled: is3D,
-    extruded: is3D,
-    // When in 2D, return 0 elevation so features are flat
-    getElevation: (f: any) => (is3D ? f.properties.valuePerSqm * 0.1 : 0),
-    getFillColor: [255, 140, 0, 180],
-    pickable: true,
-  });
-
-  const layers = [baseLayer];
-
-  // Generate grid GeoJSON of square cells (cellSizeKm x cellSizeKm) within MAP_BOUNDS
-  const cellSizeKm = 1.5;
-
-  
-
-  // Generate grid as LineString features (vertical and horizontal) to avoid gaps
-  const generateGridLines = (bounds: number[][], cellKm: number, refLat: number, alignToGlobal = true, paddingCells = 1) => {
-    let [[west, south], [east, north]] = bounds.map(b => b.slice()) as number[][];
-    const metersPerDegLat = 111320;
-    const latRad = (refLat * Math.PI) / 180;
-    const metersPerDegLon = Math.abs(Math.cos(latRad) * metersPerDegLat);
-
-  const latDelta = (cellKm * 1000) / metersPerDegLat;
-  const lonDelta = (cellKm * 1000) / metersPerDegLon;
-
-  // expand bounds by paddingCells to avoid visible gaps while panning
-  west = west - lonDelta * paddingCells;
-  east = east + lonDelta * paddingCells;
-  south = south - latDelta * paddingCells;
-  north = north + latDelta * paddingCells;
-
-    const features: any[] = [];
-    // choose starts so grid aligns globally when requested
-    let startLon = west;
-    let startLat = south;
-    if (alignToGlobal) {
-      // anchor to a stable global origin (0 lon/0 lat)
-      const originLon = 0;
-      const originLat = 0;
-      startLon = Math.floor((west - originLon) / lonDelta) * lonDelta + originLon;
-      startLat = Math.floor((south - originLat) / latDelta) * latDelta + originLat;
-    }
-
-    // vertical lines (constant lon, varying lat)
-    for (let lon = startLon; lon <= east + lonDelta / 2; lon += lonDelta) {
-      const x = lon;
-      if (x < west - 1e-12) continue;
-      const xc = Math.min(x, east);
-      features.push({
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [xc, south],
-            [xc, north]
-          ]
-        }
-      });
-      if (x >= east) break;
-    }
-
-    // horizontal lines (constant lat, varying lon)
-    for (let lat = startLat; lat <= north + latDelta / 2; lat += latDelta) {
-      const y = lat;
-      if (y < south - 1e-12) continue;
-      const yc = Math.min(y, north);
-      features.push({
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [west, yc],
-            [east, yc]
-          ]
-        }
-      });
-      if (y >= north) break;
-    }
-
-    return { type: 'FeatureCollection', features };
-  };
-
-  // Determine visible bounds from DeckGL viewport (falls back to MAP_BOUNDS)
-  const getVisibleBounds = (): number[][] => {
-    try {
-      const vp = new WebMercatorViewport({
-        ...viewState,
-        width: size.width,
-        height: size.height,
-      });
-      const b = vp.getBounds();
-      // vp.getBounds() may return [west, south, east, north] or [[w,s],[e,n]] depending
-      if (!b) return MAP_BOUNDS;
-      if (Array.isArray(b[0])) {
-        // [[w,s],[e,n]]
-        return b as unknown as number[][];
-      }
-      // [w,s,e,n]
-      const arr = b as number[];
-      const w = arr[0];
-      const s = arr[1];
-      const e = arr[2];
-      const n = arr[3];
-      return [[w, s], [e, n]];
-    } catch (err) {
-      return MAP_BOUNDS;
-    }
-  };
-
-  const visibleBounds = getVisibleBounds();
-
-  // If fixedGrid is enabled, create a large, memoized global grid once and reuse it so
-  // panning doesn't change the grid alignment vertically/horizontally. Otherwise use dynamic visible grid.
-  const globalGridData: any = React.useMemo(() => {
-    if (!showGrid || !fixedGrid) return null;
-    // compute a larger bbox by expanding MAP_BOUNDS by N cells
-    const refLat = INITIAL_VIEW_STATE.latitude;
-    const metersPerDegLat = 111320;
-    const latDelta = (cellSizeKm * 1000) / metersPerDegLat;
-    const latPad = latDelta * 50; // expand by ~50 cells vertically
-
-    // For longitude pad, use refLat
-    const metersPerDegLon = Math.abs(Math.cos((refLat * Math.PI) / 180) * metersPerDegLat);
-    const lonDelta = (cellSizeKm * 1000) / metersPerDegLon;
-    const lonPad = lonDelta * 50; // expand by ~50 cells horizontally
-
-    const [[w, s], [e, n]] = MAP_BOUNDS;
-    const bigBounds: number[][] = [[w - lonPad, s - latPad], [e + lonPad, n + latPad]];
-    return generateGridLines(bigBounds, cellSizeKm, refLat, true, 0);
-  }, [showGrid, fixedGrid, cellSizeKm]);
-
-  const dynamicGridData: any = React.useMemo(() => {
-    if (!showGrid || fixedGrid) return null;
-    return generateGridLines(visibleBounds, cellSizeKm, viewState.latitude || INITIAL_VIEW_STATE.latitude, false, 1);
-  }, [showGrid, fixedGrid, visibleBounds, cellSizeKm, viewState.latitude]);
-
-  const gridData: any = fixedGrid ? globalGridData : dynamicGridData;
-
-  // Build final layers array; grid layer typed as any to avoid strict type mismatch
-  const allLayers: any[] = [...layers];
-  if (showGrid && gridData) {
-    const gridLayer: any = new GeoJsonLayer({
-      id: 'grid-layer',
-      data: gridData,
-      stroked: true,
-      filled: false,
-      getLineColor: [255, 0, 0, 80],
-      lineWidthUnits: 'pixels',
-      getLineWidth: 1,
-      pickable: false,
-    });
-    allLayers.push(gridLayer);
+  if (selectedResult) {
+    const marker = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [selectedResult.lon, selectedResult.lat] }, properties: {} }] };
+    layers.push(new GeoJsonLayer({ id: 'search-marker', data: marker, pointRadiusMinPixels: 6, getFillColor: [0, 120, 255, 200], stroked: true } as any));
   }
 
+  if (showHuman3D && humanCoords) layers.push(new ScenegraphLayer({ id: 'human-3d', scenegraph: HUMAN_MODEL_URL, getPosition: () => [humanCoords[0], humanCoords[1], 0], sizeScale: 10, getOrientation: () => [0, 0, 0], pickable: true } as any));
+
+  const handleSearch = async () => {
+    const q = (searchQuery || '').trim();
+    if (!q) return;
+    setIsSearching(true);
+    setSearchError(null);
+    try {
+      const results = await geocode(q);
+      if (!results.length) {
+        setSearchError('No se encontró la dirección');
+        return;
+      }
+      setSelectedResult(results[0]);
+      setViewState({ ...viewState, longitude: results[0].lon, latitude: results[0].lat, zoom: Math.max(viewState.zoom || 11, 14) });
+    } catch (err: any) {
+      setSearchError(err.message || 'Error de geocodificación');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const onMapLoad = (evt: any) => { try { if (evt && evt.target && typeof evt.target.setMaxBounds === 'function') evt.target.setMaxBounds(MAP_BOUNDS); } catch (err) {} };
+
+  const checkAndOpenStreetView = () => {
+    const lon = viewState.longitude;
+    const lat = viewState.latitude;
+    if (typeof lon !== 'number' || typeof lat !== 'number') return;
+    setStreetViewCoords([lon, lat]);
+    setStreetViewOpen(true);
+  };
+
   return (
-    <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
-      <DeckGL
-        viewState={viewState}
-        onViewStateChange={({ viewState: vs }: any) => {
-          const bounded = clampViewState(vs);
-          setViewState(bounded);
-        }}
-        controller={{
-          // always allow panning with left mouse drag
-          dragPan: true,
-          // disable left-drag rotation so left-drag always pans even in 3D
-          dragRotate: false,
-          // enable scroll zoom
-          scrollZoom: true,
-        }}
-  layers={allLayers}
-        getTooltip={({ object }: any) => object && `${object.properties && object.properties.name}`}
-      >
-        <StaticMap
-          reuseMaps
-          mapLib={maplibregl}
-          mapStyle={mapStyle}
-          onLoad={(evt: any) => {
-            try {
-              // evt.target is the underlying maplibre map instance
-              if (evt && evt.target && typeof evt.target.setMaxBounds === 'function') {
-                evt.target.setMaxBounds(MAP_BOUNDS);
-              }
-            } catch (err) {
-              // ignore runtime errors setting bounds
-              // console.warn('Failed to set map bounds', err);
-            }
-          }}
-          // prevent the StaticMap from capturing pointer events so DeckGL interactions work smoothly
-          style={{ pointerEvents: "none" }}
-        />
-      </DeckGL>
-      <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }}>
-        <div style={{ background: 'rgba(255,255,255,0.9)', padding: 8, borderRadius: 6, boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }}>
-          <button
-            onClick={() => {
-              if (is3D) {
-                // switch to 2D: set pitch to 0
-                setViewState({ ...viewState, pitch: 0, bearing: 0 });
-                setIs3D(false);
-              } else {
-                // switch to 3D: restore pitch
-                setViewState({ ...viewState, pitch: 45 });
-                setIs3D(true);
-              }
-            }}
-            style={{ padding: '6px 10px', cursor: 'pointer' }}
-          >
-            {is3D ? 'Cambiar a 2D' : 'Cambiar a 3D'}
-          </button>
-          <div style={{ marginTop: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
-              <span style={{ fontSize: 12 }}>Mostrar cuadricula 1.5km</span>
-            </label>
+    <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+      <MapView viewState={viewState} onViewStateChange={(vs: any) => setViewState(clampViewState(vs))} layers={layers} mapMode={mapMode} onMapLoad={onMapLoad} />
+
+      {/* Controls */}
+      <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, background: 'rgba(255,255,255,0.95)', padding: 8, borderRadius: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }} placeholder="Buscar dirección..." style={{ padding: '6px 8px', width: 220 }} />
+          <button onClick={() => handleSearch()} disabled={isSearching || !searchQuery.trim()}>{isSearching ? 'Buscando...' : 'Ir'}</button>
+        </div>
+        {searchError && <div style={{ color: 'crimson', fontSize: 12, marginBottom: 6 }}>{searchError}</div>}
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => setMapMode(mapMode === 'streets' ? 'satellite' : 'streets')}>{mapMode === 'streets' ? 'Satélite' : 'Mapa'}</button>
+          <button onClick={() => setIs3D((v) => !v)}>{is3D ? '3D' : '2D'}</button>
+          <button onClick={() => setViewState({ ...viewState, zoom: Math.min((viewState.zoom || 11) + 1, INITIAL_VIEW_STATE.maxZoom) })}>+</button>
+          <button onClick={() => setViewState({ ...viewState, zoom: Math.max((viewState.zoom || 11) - 1, INITIAL_VIEW_STATE.minZoom) })}>-</button>
+          <button onClick={() => checkAndOpenStreetView()}>Street View</button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />Grid</label>
+        </div>
+      </div>
+
+      {streetViewOpen && streetViewCoords && (
+        <div style={{ position: 'absolute', bottom: 12, left: 12, width: 480, height: 360, zIndex: 20, background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', borderRadius: 6, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: '#f5f5f5' }}>
+            <div style={{ fontSize: 13 }}>Street View</div>
+            <div><button onClick={() => setStreetViewOpen(false)}>Cerrar</button></div>
           </div>
-          <div style={{ marginTop: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={fixedGrid} onChange={(e) => setFixedGrid(e.target.checked)} />
-              <span style={{ fontSize: 12 }}>Alinear cuadricula globalmente (fija)</span>
-            </label>
-          </div>
-          {is3D && (
-            <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-              <button
-                onClick={() => setViewState({ ...viewState, bearing: (viewState.bearing || 0) - 15 })}
-                style={{ padding: '6px 8px', cursor: 'pointer' }}
-              >
-                ⟲
-              </button>
-              <button
-                onClick={() => setViewState({ ...viewState, bearing: (viewState.bearing || 0) + 15 })}
-                style={{ padding: '6px 8px', cursor: 'pointer' }}
-              >
-                ⟳
-              </button>
-            </div>
+          <iframe title="street-view" style={{ width: '100%', height: '100%', border: 0 }} src={`https://www.google.com/maps?q=&layer=c&cbll=${streetViewCoords[1]},${streetViewCoords[0]}&cbp=11,0,0,0,0`} />
+        </div>
+      )}
+
+      <div style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 15 }}>
+        <div style={{ background: 'rgba(255,255,255,0.95)', padding: 6, borderRadius: 6 }}>
+          {!showHuman3D ? (
+            <button title="Mostrar humano" onClick={() => { const [[west, south]] = MAP_BOUNDS as any; setHumanCoords([west + 0.02, south + 0.02]); setShowHuman3D(true); }}>🧍</button>
+          ) : (
+            <button title="Quitar humano" onClick={() => { setShowHuman3D(false); setHumanCoords(null); }}>✖</button>
           )}
         </div>
       </div>
     </div>
   );
 }
-
-export default App;
