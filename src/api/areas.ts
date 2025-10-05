@@ -1,10 +1,10 @@
 import { api } from "./client";
-import type { FeatureCollection, Polygon } from "geojson";
+import type { FeatureCollection, Geometry } from "geojson";
 
 // 🔹 POST: enviar el área seleccionada al backend
-export async function postSelectedArea(area: FeatureCollection<Polygon>) {
+export async function postSelectedArea(area: FeatureCollection<Geometry>) {
   const { data } = await api.post("/areas", area);
-  return data; // puede devolver { resultId } o { success, result }
+  return data;
 }
 
 // 🔹 GET: historial de áreas analizadas

@@ -46,8 +46,8 @@ export default function App(): React.ReactElement {
   const { analyzeArea, result, loading, error } = useAreaAnalysis();
 
   // ---------- AREA SELECTION ----------
-  const handleAreaSelected = async (polygon: FeatureCollection<Polygon>) => {
-    const data = await analyzeArea(polygon);
+    const handleAreaSelected = async (geojson: FeatureCollection) => {
+    const data = await analyzeArea(geojson);
     if (data) {
       const optimizedLayer = new GeoJsonLayer({
         id: "optimized-areas",
@@ -294,6 +294,13 @@ export default function App(): React.ReactElement {
               } as FeatureCollection<Polygon>);
             }
           }}
+          onAreaDrawn={handleAreaSelected}
+          onError={(msg) => {
+            // Simple toast near the top-right
+            // eslint-disable-next-line no-alert
+            console.warn('Map error:', msg);
+          }}
+
         />
 
         {/* 🔹 Overlay de carga o error */}
