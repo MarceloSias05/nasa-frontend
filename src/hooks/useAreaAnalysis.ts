@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FeatureCollection, Geometry } from "geojson";
 import { postSelectedArea } from "../api/areas";
 
+// Force mock with REACT_APP_MOCK_API=true; even if false, we still fall back to mock on failure
 const MOCK_ENABLED = String(process.env.REACT_APP_MOCK_API || '').toLowerCase() === 'true';
 
 function mockAnalyze(area: FeatureCollection<Geometry>): Promise<FeatureCollection<Geometry>> {
@@ -42,14 +43,12 @@ export function useAreaAnalysis() {
       setResult(res);
       return res;
     } catch (err: any) {
-      // If backend fails but we want to keep UX flowing, return a mock
-      if (MOCK_ENABLED) {
-        const mock = await mockAnalyze(area);
-        setResult(mock);
-        return mock;
-      }
-      setError(err?.message || "Error analizando el área");
-      return null;
+      // Fallback to mock on any backend error to keep UX flowing
+      console.warn('useAreaAnalysis: backend failed, using mock:', err?.message || err);
+      const mock = await mockAnalyze(area);
+      setResult(mock);
+      // Do not set error to avoid noisy overlays when we successfully fallback
+      return mock;
     } finally {
       setLoading(false);
     }

@@ -3,16 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@nebula.gl/edit-modes": "^1.0.4",
+    "@nebula.gl/layers": "^1.0.4",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
     "@types/jest": "^27.5.2",
-    "@types/node": "^16.18.126",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "deck.gl": "^9.1.15",
-    "maplibre-gl": "^2.4.0",
+    "@deck.gl/extensions": "8.9.36",
+    "@luma.gl/constants": "^8.5.21",
+    "@luma.gl/core": "^8.5.21",
+    "@luma.gl/engine": "^8.5.21",
+    "@luma.gl/shadertools": "^8.5.21",
+    "deck.gl": "8.9.36",
+    "maplibre-gl": "^5.8.0",
     "maplibre-gl-draw": "^1.6.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -20,6 +26,11 @@
     "react-scripts": "5.0.1",
     "typescript": "^4.9.5",
     "web-vitals": "^2.1.4"
+  },
+  "overrides": {
+    "@deck.gl/*": "8.9.36",
+    "@luma.gl/*": "^8.5.21",
+    "@loaders.gl/*": "^3.4.15"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -47,9 +58,9 @@
   },
   "devDependencies": {
     "@types/axios": "^0.9.36",
+    "@types/node": "^20.19.0",
     "axios": "^1.12.2",
     "install": "^0.13.0",
-    "npm": "^11.6.1",
-    "vite": "^7.1.9"
+    "npm": "^11.6.1"
   }
 }

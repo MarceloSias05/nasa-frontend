@@ -1,9 +1,15 @@
-import React, { useMemo, useState } from "react";
+// src/App.tsx
+import React, { useMemo, useState, useEffect } from "react";
 import MapView from "./components/MapView";
 import Sidebar from "./components/Sidebar/Sidebar";
 import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { ScenegraphLayer } from "@deck.gl/mesh-layers";
-import type { FeatureCollection, LineString, Point, Polygon } from "geojson";
+import type {
+  FeatureCollection,
+  LineString,
+  Point,
+  Geometry,
+} from "geojson";
 import {
   MAP_BOUNDS,
   HUMAN_MODEL_URL,
@@ -14,6 +20,7 @@ import { clampViewState, generateGridLines } from "./utils/mapUtils";
 import { geocode } from "./services/geocoding";
 import type { GeocodeResult } from "./services/geocoding";
 import { useAreaAnalysis } from "./hooks/useAreaAnalysis";
+// removed unused polygonToLatLon import
 
 export default function App(): React.ReactElement {
   // ---------- STATE ----------
@@ -23,56 +30,46 @@ export default function App(): React.ReactElement {
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE as any);
   const [showGrid, setShowGrid] = useState(false);
   const [activeVis, setActiveVis] = useState<string>("hexbin");
+
   const [layer, setLayer] = useState<string>("Población");
   const [cellSize, setCellSize] = useState<number>(50);
   const [clusterRadius, setClusterRadius] = useState<number>(75);
   const [maxHeight, setMaxHeight] = useState<number>(25);
+
   const [budget, setBudget] = useState<number>(300000);
   const [maxParques, setMaxParques] = useState<number>(10);
   const [maxEscuelas, setMaxEscuelas] = useState<number>(10);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<any | null>(null);
+
   const [streetViewOpen, setStreetViewOpen] = useState(false);
   const [streetViewCoords, setStreetViewCoords] = useState<[number, number] | null>(null);
-  const [showHuman3D, setShowHuman3D] = useState(false);
-  const [humanCoords, setHumanCoords] = useState<[number, number] | null>(null);
-  const [featurePopup, setFeaturePopup] = useState<{ lng: number; lat: number; title: string; details?: any; screenX?: number; screenY?: number } | null>(null);
+
+  const [showHuman3D] = useState(false);
+  const [humanCoords] = useState<[number, number] | null>(null);
+
+  const [featurePopup, setFeaturePopup] = useState<{
+    lng: number; lat: number; title: string; details?: any; screenX?: number; screenY?: number
+  } | null>(null);
   const [animTime, setAnimTime] = useState<number>(0);
+
   const [customLayer, setCustomLayer] = useState<any | null>(null);
 
-  const { analyzeArea, result, loading, error } = useAreaAnalysis();
-
-  // ---------- AREA SELECTION ----------
-    const handleAreaSelected = async (geojson: FeatureCollection) => {
-    const data = await analyzeArea(geojson);
-    if (data) {
-      const optimizedLayer = new GeoJsonLayer({
-        id: "optimized-areas",
-        data,
-        filled: true,
-        getFillColor: [0, 200, 0, 100],
-        stroked: true,
-        getLineColor: [0, 150, 0, 180],
-        pickable: true,
-      });
-      setCustomLayer(optimizedLayer);
-    }
-  };
+  const { analyzeArea, loading, error } = useAreaAnalysis();
 
   // ---------- ANIMATION ----------
-  React.useEffect(() => {
+  useEffect(() => {
     let raf = 0 as unknown as number;
     const tick = (t: number) => {
       setAnimTime(t);
       raf = requestAnimationFrame(tick);
     };
     if (selectedResult || featurePopup) raf = requestAnimationFrame(tick);
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-    };
+    return () => { if (raf) cancelAnimationFrame(raf); };
   }, [selectedResult, featurePopup]);
 
   // ---------- BASE LAYER ----------
@@ -254,6 +251,26 @@ export default function App(): React.ReactElement {
     setStreetViewOpen(true);
   };
 
+  // ---------- AREA SELECTED (from MapView onAreaDrawn) ----------
+  const handleAreaSelected = async (geojson: FeatureCollection<Geometry>) => {
+    // extra: obtener perímetro como [{lat, lon}, ...] (removed unused variable)
+
+    const data = await analyzeArea(geojson);
+    if (data) {
+      const optimizedLayer = new GeoJsonLayer({
+        id: "optimized-areas",
+        data,
+        filled: true,
+        getFillColor: [0, 200, 0, 100],
+        stroked: true,
+        getLineColor: [0, 150, 0, 180],
+        pickable: true,
+        parameters: { depthTest: false },
+      });
+      setCustomLayer(optimizedLayer);
+    }
+  };
+
   // ---------- RENDER ----------
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
@@ -284,35 +301,109 @@ export default function App(): React.ReactElement {
           mapMode={mapMode}
           is3D={is3D}
           onMapLoad={onMapLoad}
-          onFeatureClick={(features) => {
-            // Aquí podrías invocar handleAreaSelected cuando tengas geometría
-            // de área dibujada. Por ahora, mantenemos clicks para popups.
-            if (features && features[0] && features[0].geometry?.type === "Polygon") {
-              handleAreaSelected({
-                type: "FeatureCollection",
-                features,
-              } as FeatureCollection<Polygon>);
+          onFeatureClick={(features, map, clickInfo) => {
+            try {
+              if (!features || !features.length) {
+                setFeaturePopup(null);
+                return;
+              }
+              const f = features[0];
+              const name =
+                (f.properties && (f.properties.name || f.properties.label || f.properties.title)) ||
+                f.text ||
+                f.place_name ||
+                (f.properties && JSON.stringify(f.properties)) ||
+                "Feature";
+              // Derive a safe [lon, lat]
+              let lon: number = viewState.longitude;
+              let lat: number = viewState.latitude;
+              const clickCoord = (clickInfo && (clickInfo.coordinate || clickInfo.lngLat)) || null;
+              if (
+                Array.isArray(clickCoord) &&
+                typeof clickCoord[0] === "number" &&
+                typeof clickCoord[1] === "number"
+              ) {
+                lon = clickCoord[0];
+                lat = clickCoord[1];
+              } else {
+                const geom = f && f.geometry;
+                const coords = geom && (geom as any).coordinates;
+                if (
+                  geom && (geom as any).type === "Point" &&
+                  Array.isArray(coords) &&
+                  typeof coords[0] === "number" &&
+                  typeof coords[1] === "number"
+                ) {
+                  lon = coords[0];
+                  lat = coords[1];
+                }
+              }
+
+              let px: number | null = null;
+              let py: number | null = null;
+              if (clickInfo && typeof clickInfo.x === "number" && typeof clickInfo.y === "number") {
+                px = clickInfo.x;
+                py = clickInfo.y;
+              } else if (map && typeof map.project === "function") {
+                try {
+                  const p = map.project([lon, lat]);
+                  px = p.x;
+                  py = p.y;
+                } catch {
+                  px = null;
+                }
+              }
+
+              setFeaturePopup({
+                lng: Number(lon),
+                lat: Number(lat),
+                title: name,
+                details: f,
+                screenX: px ?? 12,
+                screenY: py ?? 72,
+              } as any);
+            } catch {
+              setFeaturePopup(null);
             }
           }}
           onAreaDrawn={handleAreaSelected}
-          onError={(msg) => {
-            // Simple toast near the top-right
-            // eslint-disable-next-line no-alert
-            console.warn('Map error:', msg);
-          }}
-
         />
 
-        {/* 🔹 Overlay de carga o error */}
+        {/* Loading / Error overlays */}
         {loading && (
-          <div style={{
-            position: "absolute", top: 20, left: "50%", transform: "translateX(-50%)",
-            background: "rgba(255,255,255,0.9)", padding: "8px 12px", borderRadius: 6, zIndex: 99
-          }}>
+          <div
+            style={{
+              position: "absolute",
+              top: 20,
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "rgba(255,255,255,0.9)",
+              padding: "8px 12px",
+              borderRadius: 6,
+              zIndex: 99,
+            }}
+          >
             Analizando área seleccionada...
           </div>
         )}
-        {/* 🔹 Search y controles del mapa */}
+        {error && (
+          <div
+            style={{
+              position: "absolute",
+              top: 20,
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "#ffdddd",
+              padding: "8px 12px",
+              borderRadius: 6,
+              zIndex: 99,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        {/* Search + Controls */}
         <div
           style={{
             position: "absolute",
@@ -333,18 +424,44 @@ export default function App(): React.ReactElement {
               placeholder="Buscar dirección..."
               style={{ padding: "6px 8px", width: 220 }}
             />
-            <button
-              onClick={handleSearch}
-              disabled={isSearching || !searchQuery.trim()}
-            >
+            <button onClick={handleSearch} disabled={isSearching || !searchQuery.trim()}>
               {isSearching ? "Buscando..." : "Ir"}
             </button>
           </div>
 
-          {searchError && (
-            <div style={{ color: "crimson", fontSize: 12, marginBottom: 6 }}>
-              {searchError}
+          {searchResults && searchResults.length > 0 && (
+            <div style={{ position: "relative", marginBottom: 8 }}>
+              <div
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  width: 300,
+                  background: "#fff",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                  borderRadius: 6,
+                  maxHeight: 220,
+                  overflow: "auto",
+                  zIndex: 50,
+                }}
+              >
+                {searchResults.map((r, idx) => (
+                  <div
+                    key={idx}
+                    onClick={() => selectSearchResult(r)}
+                    style={{ padding: "8px", borderBottom: "1px solid #eee", cursor: "pointer" }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
+                    <div style={{ fontSize: 12, color: "#666" }}>
+                      {r.lat.toFixed(5)}, {r.lon.toFixed(5)}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
+          )}
+
+          {searchError && (
+            <div style={{ color: "crimson", fontSize: 12, marginBottom: 6 }}>{searchError}</div>
           )}
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -358,24 +475,50 @@ export default function App(): React.ReactElement {
                   setViewState({ ...viewState, pitch: 0, bearing: 0 });
                   setIs3D(false);
                 } else {
-                  setViewState({ ...viewState, pitch: savedCamera?.pitch ?? 45, bearing: savedCamera?.bearing ?? 0 });
+                  setViewState({
+                    ...viewState,
+                    pitch: savedCamera?.pitch ?? 45,
+                    bearing: savedCamera?.bearing ?? 0,
+                  });
                   setIs3D(true);
                 }
               }}
             >
               {is3D ? "3D" : "2D"}
             </button>
-            <button onClick={() => setViewState({ ...viewState, zoom: (viewState.zoom || 11) + 1 })}>+</button>
-            <button onClick={() => setViewState({ ...viewState, zoom: (viewState.zoom || 11) - 1 })}>-</button>
+            <button
+              onClick={() =>
+                setViewState({
+                  ...viewState,
+                  zoom: Math.min((viewState.zoom || 11) + 1, INITIAL_VIEW_STATE.maxZoom),
+                })
+              }
+            >
+              +
+            </button>
+            <button
+              onClick={() =>
+                setViewState({
+                  ...viewState,
+                  zoom: Math.max((viewState.zoom || 11) - 1, INITIAL_VIEW_STATE.minZoom),
+                })
+              }
+            >
+              -
+            </button>
             <button onClick={checkAndOpenStreetView}>Street View</button>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={showGrid}
+                onChange={(e) => setShowGrid(e.target.checked)}
+              />
               Grid
             </label>
           </div>
         </div>
 
-        {/* 🔹 Ventana Street View */}
+        {/* Street View */}
         {streetViewOpen && streetViewCoords && (
           <div
             style={{
@@ -409,14 +552,77 @@ export default function App(): React.ReactElement {
             />
           </div>
         )}
-        {error && (
-          <div style={{
-            position: "absolute", top: 20, left: "50%", transform: "translateX(-50%)",
-            background: "#ffdddd", padding: "8px 12px", borderRadius: 6, zIndex: 99
-          }}>
-            {error}
-          </div>
-        )}
+
+        {/* Popup de feature */}
+        {featurePopup && (() => {
+          const sx = Math.max(8, Math.min((featurePopup.screenX ?? 12), window.innerWidth - 380));
+          const sy = Math.max(8, Math.min((featurePopup.screenY ?? 72), window.innerHeight - 260));
+          return (
+            <div style={{ position: "absolute", left: sx, top: sy, zIndex: 60, width: 360 }}>
+              <div
+                style={{
+                  background: "white",
+                  padding: 12,
+                  borderRadius: 8,
+                  boxShadow: "0 4px 14px rgba(0,0,0,0.18)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 700 }}>{featurePopup.title}</div>
+                    <div style={{ fontSize: 12, color: "#555" }}>
+                      {featurePopup.lat.toFixed(5)}, {featurePopup.lng.toFixed(5)}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() => {
+                        try {
+                          const text = JSON.stringify(featurePopup.details || {}, null, 2);
+                          if (navigator.clipboard) navigator.clipboard.writeText(text);
+                        } catch {}
+                      }}
+                    >
+                      Copiar JSON
+                    </button>
+                    <button onClick={() => setFeaturePopup(null)}>Cerrar</button>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 10, maxHeight: 220, overflow: "auto" }}>
+                  {featurePopup.details && featurePopup.details.properties ? (
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <tbody>
+                        {Object.entries(featurePopup.details.properties).map(([k, v]) => (
+                          <tr key={k} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                            <td
+                              style={{
+                                padding: "6px 8px",
+                                fontSize: 13,
+                                color: "#333",
+                                width: "40%",
+                                verticalAlign: "top",
+                              }}
+                            >
+                              <strong>{k}</strong>
+                            </td>
+                            <td style={{ padding: "6px 8px", fontSize: 13, color: "#444" }}>
+                              {String(v)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <pre style={{ fontSize: 12, color: "#333", whiteSpace: "pre-wrap" }}>
+                      {JSON.stringify(featurePopup.details || {}, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
