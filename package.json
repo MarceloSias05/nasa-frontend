@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@deck.gl/extensions": "8.9.36",
+    "@luma.gl/constants": "^8.5.21",
+    "@luma.gl/core": "^8.5.21",
+    "@luma.gl/engine": "^8.5.21",
+    "@luma.gl/shadertools": "^8.5.21",
     "@nebula.gl/edit-modes": "^1.0.4",
     "@nebula.gl/layers": "^1.0.4",
     "@testing-library/dom": "^10.4.1",
@@ -12,11 +17,6 @@
     "@types/jest": "^27.5.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@deck.gl/extensions": "8.9.36",
-    "@luma.gl/constants": "^8.5.21",
-    "@luma.gl/core": "^8.5.21",
-    "@luma.gl/engine": "^8.5.21",
-    "@luma.gl/shadertools": "^8.5.21",
     "deck.gl": "8.9.36",
     "maplibre-gl": "^5.8.0",
     "maplibre-gl-draw": "^1.6.9",
@@ -25,7 +25,8 @@
     "react-map-gl": "^8.1.0",
     "react-scripts": "5.0.1",
     "typescript": "^4.9.5",
-    "web-vitals": "^2.1.4"
+    "web-vitals": "^2.1.4",
+    "xlsx": "^0.18.5"
   },
   "overrides": {
     "@deck.gl/*": "8.9.36",
@@ -61,6 +62,7 @@
     "@types/node": "^20.19.0",
     "axios": "^1.12.2",
     "install": "^0.13.0",
-    "npm": "^11.6.1"
+    "npm": "^11.6.1",
+    "@types/xlsx": "^0.18.5"
   }
 }

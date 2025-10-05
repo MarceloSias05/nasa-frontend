@@ -46,13 +46,18 @@ const MapView: React.FC<MapViewProps> = ({
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "d") {
-        setDrawMode(DrawPolygonMode);
+        // Store class reference without invoking it as updater
+        setDrawMode(() => DrawPolygonMode);
+      }
+      if (e.key === "Escape") {
+        setDrawMode(null);
       }
     };
     window.addEventListener("keydown", handleKeyPress);
     return () => window.removeEventListener("keydown", handleKeyPress);
   }, []);
 
+  // Only enable edit interactions when a draw mode is active
   const editableLayer = new (EditableGeoJsonLayer as any)({
     id: "editable-layer",
     data: drawData,
@@ -67,6 +72,7 @@ const MapView: React.FC<MapViewProps> = ({
     getFillColor: [0, 128, 255, 60],
     getLineColor: [0, 128, 255, 255],
     lineWidthMinPixels: 2,
+    pickable: !!drawMode,
   });
 
   return (

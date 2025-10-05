@@ -21,6 +21,8 @@ import { geocode } from "./services/geocoding";
 import type { GeocodeResult } from "./services/geocoding";
 import { useAreaAnalysis } from "./hooks/useAreaAnalysis";
 // removed unused polygonToLatLon import
+import { parseLatLonCsv, coordsToPolygonFeatureCollection } from "./utils/csv";
+import { parseWktsToFeatureCollection } from "./utils/wkt";
 
 export default function App(): React.ReactElement {
   // ---------- STATE ----------
@@ -46,8 +48,7 @@ export default function App(): React.ReactElement {
   const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<any | null>(null);
 
-  const [streetViewOpen, setStreetViewOpen] = useState(false);
-  const [streetViewCoords, setStreetViewCoords] = useState<[number, number] | null>(null);
+  // removed unused Street View state
 
   const [showHuman3D] = useState(false);
   const [humanCoords] = useState<[number, number] | null>(null);
@@ -58,8 +59,55 @@ export default function App(): React.ReactElement {
   const [animTime, setAnimTime] = useState<number>(0);
 
   const [customLayer, setCustomLayer] = useState<any | null>(null);
+  const [csvPolygonLayer, setCsvPolygonLayer] = useState<any | null>(null);
+  const [wktIndex, setWktIndex] = useState<{
+    bboxFeatureCollection: FeatureCollection<Geometry> | null;
+    records: Record<string, any>;
+  } | null>(null);
+  const [wktSelectedLayer, setWktSelectedLayer] = useState<any | null>(null);
 
   const { analyzeArea, loading, error } = useAreaAnalysis();
+
+  // Normalize longitudes so features stay tied to the current world copy
+  const normalizeLon = (lon: number, centerLon: number) => {
+    if (!Number.isFinite(lon) || !Number.isFinite(centerLon)) return lon;
+    // shift lon by multiples of 360 to be closest to centerLon
+    let out = lon;
+    while (out - centerLon > 180) out -= 360;
+    while (out - centerLon < -180) out += 360;
+    return out;
+  };
+
+  const normalizeFeatureCollectionToView = (
+    fc: any,
+    centerLon: number | undefined
+  ) => {
+    if (!fc || !fc.features || typeof centerLon !== 'number') return fc;
+    try {
+      const copy = { ...fc, features: fc.features.map((f: any) => ({ ...f })) };
+      copy.features = copy.features.map((f: any) => {
+        if (!f || !f.geometry) return f;
+        const geom = f.geometry;
+        const normCoords = (coords: any): any => {
+          if (typeof coords[0] === 'number' && typeof coords[1] === 'number') {
+            const lon = Number(coords[0]);
+            const lat = Number(coords[1]);
+            return [normalizeLon(lon, centerLon), lat];
+          }
+          return coords.map((c: any) => normCoords(c));
+        };
+        try {
+          const ng = { ...geom, coordinates: normCoords(geom.coordinates) };
+          return { ...f, geometry: ng };
+        } catch {
+          return f;
+        }
+      });
+      return copy;
+    } catch {
+      return fc;
+    }
+  };
 
   // ---------- ANIMATION ----------
   useEffect(() => {
@@ -83,6 +131,7 @@ export default function App(): React.ReactElement {
         getElevation: (f: any) => (is3D ? f.properties.valuePerSqm * 0.1 : 0),
         getFillColor: [255, 140, 0, 180],
         pickable: true,
+        wrapLongitude: false,
       }),
     [is3D]
   );
@@ -107,6 +156,7 @@ export default function App(): React.ReactElement {
         getLineColor: [255, 0, 0, 80],
         lineWidthUnits: "pixels",
         getLineWidth: 1,
+        wrapLongitude: false,
         pickable: false,
       })
     );
@@ -114,6 +164,7 @@ export default function App(): React.ReactElement {
 
   // ---------- CUSTOM LAYER (backend output) ----------
   if (customLayer) layers.push(customLayer);
+  if (csvPolygonLayer) layers.push(csvPolygonLayer);
 
   // ---------- SEARCH MARKER ----------
   if (selectedResult) {
@@ -134,6 +185,7 @@ export default function App(): React.ReactElement {
         pointRadiusMinPixels: 6,
         getFillColor: [0, 120, 255, 200],
         stroked: true,
+        wrapLongitude: false,
       })
     );
   }
@@ -161,6 +213,7 @@ export default function App(): React.ReactElement {
         getLineColor: [255, 255, 255, 230],
         getLineWidth: 2,
         pickable: false,
+          wrapLongitude: false,
       }),
       new ScatterplotLayer({
         id: "highlight-pulse",
@@ -174,6 +227,7 @@ export default function App(): React.ReactElement {
         getLineWidth: 2,
         updateTriggers: { getRadius: [phase], getLineColor: [phase] },
         pickable: false,
+          wrapLongitude: false,
       })
     );
   }
@@ -243,13 +297,118 @@ export default function App(): React.ReactElement {
     } catch {}
   };
 
-  const checkAndOpenStreetView = () => {
-    const lon = viewState.longitude;
-    const lat = viewState.latitude;
-    if (typeof lon !== "number" || typeof lat !== "number") return;
-    setStreetViewCoords([lon, lat]);
-    setStreetViewOpen(true);
+  // ---------- CSV POLYGON UPLOAD ----------
+  const handleCsvPolygonLoaded = (csvText: string, options?: { invert?: boolean }) => {
+    try {
+      // Detect WKT content: many lines starting with POLYGON/MULTIPOLYGON or the text contains POLYGON
+      const isWkt = /\b(POLYGON|MULTIPOLYGON)\b/i.test(csvText);
+      if (isWkt) {
+        // Parse all WKT features from text
+        const fc = parseWktsToFeatureCollection(csvText);
+        if (!fc.features || fc.features.length === 0) {
+          alert('No se encontraron POLYGON/MULTIPOLYGON en el archivo.');
+          return;
+        }
+
+        // Build bbox features index (lightweight) to render quickly
+        const bboxFeatures: any[] = [];
+        const records: Record<string, any> = {};
+        for (let i = 0; i < fc.features.length; i++) {
+          const f = fc.features[i];
+          const id = `wkt-${i}`;
+          // compute bbox
+          let coordsArr: number[][] = [];
+          if (f.geometry.type === 'Polygon') {
+            coordsArr = (f.geometry.coordinates && f.geometry.coordinates[0]) || [];
+          } else if (f.geometry.type === 'MultiPolygon') {
+            coordsArr = (f.geometry.coordinates && f.geometry.coordinates[0] && f.geometry.coordinates[0][0]) || [];
+          }
+          if (!coordsArr || coordsArr.length === 0) continue;
+          let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY, maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
+          for (const c of coordsArr) {
+            const x = Number(c[0]); const y = Number(c[1]);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+          }
+          if (!Number.isFinite(minX)) continue;
+          const bboxPoly = {
+            type: 'Feature',
+            properties: { __wkt_id: id },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[[minX, minY],[maxX, minY],[maxX, maxY],[minX, maxY],[minX, minY]]]
+            }
+          };
+          bboxFeatures.push(bboxPoly);
+          records[id] = f; // store full feature
+        }
+
+  const bboxFc: FeatureCollection = { type: 'FeatureCollection', features: bboxFeatures };
+        // Build a lightweight GeoJsonLayer for bboxes
+        const bboxFcNorm = normalizeFeatureCollectionToView(bboxFc, viewState?.longitude);
+        const bboxLayer = new GeoJsonLayer({
+          id: 'wkt-bboxes',
+          data: bboxFcNorm,
+          filled: true,
+          getFillColor: [0, 200, 0, 30],
+          stroked: true,
+          getLineColor: [0, 120, 255, 180],
+          lineWidthMinPixels: 1,
+          wrapLongitude: false,
+          pickable: true,
+        });
+        setWktIndex({ bboxFeatureCollection: bboxFc, records });
+        setCsvPolygonLayer(bboxLayer);
+        // clear any selected detailed polygon
+        setWktSelectedLayer(null);
+        return;
+      }
+
+      const { coords, errors } = parseLatLonCsv(csvText);
+      if (errors.length) {
+        console.warn('CSV parsing warnings:', errors.join(' | '));
+      }
+      if (coords.length < 3) {
+        alert('El archivo CSV debe contener al menos 3 coordenadas (lat, lon)');
+        return;
+      }
+      const fixed = options?.invert ? coords.map(([lon, lat]) => [lat, lon] as [number, number]) : coords;
+      const fc = coordsToPolygonFeatureCollection(fixed);
+      const fcNorm = normalizeFeatureCollectionToView(fc, viewState?.longitude);
+      const layer = new GeoJsonLayer({
+        id: 'csv-polygon',
+        data: fcNorm,
+        filled: true,
+        getFillColor: [0, 200, 0, 120],
+        stroked: true,
+        getLineColor: [0, 120, 255, 255],
+        lineWidthMinPixels: 2,
+        pickable: true,
+        wrapLongitude: false,
+        parameters: { depthTest: false },
+      });
+      setCsvPolygonLayer(layer);
+
+      // Fit view to polygon extent
+  const lons = fixed.map(c => c[0]);
+  const lats = fixed.map(c => c[1]);
+      const west = Math.min(...lons);
+      const east = Math.max(...lons);
+      const south = Math.min(...lats);
+      const north = Math.max(...lats);
+      setViewState({
+        ...viewState,
+        longitude: (west + east) / 2,
+        latitude: (south + north) / 2,
+        zoom: Math.max(viewState.zoom || 11, 13),
+      });
+    } catch (e) {
+      console.error('Error al procesar CSV:', e);
+      alert('No se pudo procesar el CSV. Ver consola para más detalles.');
+    }
   };
+
+  // (removed unused helper: checkAndOpenStreetView)
 
   // ---------- AREA SELECTED (from MapView onAreaDrawn) ----------
   const handleAreaSelected = async (geojson: FeatureCollection<Geometry>) => {
@@ -265,6 +424,7 @@ export default function App(): React.ReactElement {
         stroked: true,
         getLineColor: [0, 150, 0, 180],
         pickable: true,
+        wrapLongitude: false,
         parameters: { depthTest: false },
       });
       setCustomLayer(optimizedLayer);
@@ -291,6 +451,7 @@ export default function App(): React.ReactElement {
         onMaxParquesChange={setMaxParques}
         maxEscuelas={maxEscuelas}
         onMaxEscuelasChange={setMaxEscuelas}
+        onCsvPolygonLoaded={handleCsvPolygonLoaded}
       />
 
       <div style={{ position: "relative", flex: 1 }}>
@@ -308,6 +469,30 @@ export default function App(): React.ReactElement {
                 return;
               }
               const f = features[0];
+              // If this feature is one of our bbox placeholders, load full polygon
+              const wktId = f?.properties && f.properties.__wkt_id;
+              if (wktId && wktIndex && wktIndex.records && wktIndex.records[wktId]) {
+                const full = wktIndex.records[wktId];
+                const fullNorm = normalizeFeatureCollectionToView(full, viewState?.longitude);
+                const layer = new GeoJsonLayer({
+                  id: `wkt-selected-${wktId}`,
+                  data: fullNorm,
+                  filled: true,
+                  getFillColor: [0, 200, 0, 120],
+                  stroked: true,
+                  getLineColor: [0, 120, 255, 255],
+                  lineWidthMinPixels: 2,
+                  pickable: true,
+                  wrapLongitude: false,
+                  parameters: { depthTest: false },
+                });
+                setWktSelectedLayer(layer);
+                // replace bbox layer with selected detailed layer
+                setCsvPolygonLayer(layer);
+                // remove bbox fc to avoid confusion in UI
+                setWktIndex({ ...(wktIndex || {}), bboxFeatureCollection: null });
+                return;
+              }
               const name =
                 (f.properties && (f.properties.name || f.properties.label || f.properties.title)) ||
                 f.text ||
@@ -506,7 +691,6 @@ export default function App(): React.ReactElement {
             >
               -
             </button>
-            <button onClick={checkAndOpenStreetView}>Street View</button>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
                 type="checkbox"
@@ -518,40 +702,7 @@ export default function App(): React.ReactElement {
           </div>
         </div>
 
-        {/* Street View */}
-        {streetViewOpen && streetViewCoords && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: 12,
-              left: 12,
-              width: 480,
-              height: 360,
-              zIndex: 20,
-              background: "#fff",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-              borderRadius: 6,
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                padding: "6px 8px",
-                background: "#f5f5f5",
-              }}
-            >
-              <div style={{ fontSize: 13 }}>Street View</div>
-              <button onClick={() => setStreetViewOpen(false)}>Cerrar</button>
-            </div>
-            <iframe
-              title="street-view"
-              style={{ width: "100%", height: "100%", border: 0 }}
-              src={`https://www.google.com/maps?q=&layer=c&cbll=${streetViewCoords[1]},${streetViewCoords[0]}&cbp=11,0,0,0,0`}
-            />
-          </div>
-        )}
+        {/* Street View removed */}
 
         {/* Popup de feature */}
         {featurePopup && (() => {

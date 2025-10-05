@@ -1,49 +1,21 @@
 // src/components/Sidebar.tsx
-import React from "react";
+import React, { useState } from "react";
+import * as XLSX from "xlsx";
 import "./Sidebar.css";
 
-const FaTh: React.FC = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-    <rect x="0" y="0" width="6" height="6" />
-    <rect x="10" y="0" width="6" height="6" />
-    <rect x="0" y="10" width="6" height="6" />
-    <rect x="10" y="10" width="6" height="6" />
-  </svg>
-);
-
-const FaMap: React.FC = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M9 3L5 5v13l4 2 4-2 4 2V5l-4-2-4 2z" />
-  </svg>
-);
-
-const FaCubes: React.FC = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M12 2l7 4v6l-7 4-7-4V6l7-4zM12 12l7-4M12 12v6M12 12L5 8" />
-  </svg>
-);
-
-const FaClock: React.FC = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <circle cx="12" cy="12" r="9" />
-    <path d="M12 7v5l3 2" stroke="#fff" strokeWidth="1" fill="none" />
-  </svg>
-);
-
-const FaChartBar: React.FC = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <rect x="3" y="11" width="4" height="8" />
-    <rect x="10" y="7" width="4" height="12" />
-    <rect x="17" y="3" width="4" height="16" />
+// ---- Íconos (minimalistas y reutilizables) ----
+const Icon = ({ path, size = 16 }: { path: string; size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d={path} />
   </svg>
 );
 
 const menuItems = [
-  { icon: <FaTh />, label: "Hexbin/Grid", key: "hexbin" },
-  { icon: <FaMap />, label: "Cluster Markers", key: "cluster" },
-  { icon: <FaCubes />, label: "Extrusión 3D", key: "extrusion3d" },
-  { icon: <FaClock />, label: "Isochrones", key: "isochrones" },
-  { icon: <FaChartBar />, label: "Diagramas de Voronoi", key: "voronoi" },
+  { icon: <Icon path="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" />, label: "Hexbin/Grid", key: "hexbin" },
+  { icon: <Icon path="M9 3L5 5v13l4 2 4-2 4 2V5l-4-2-4 2z" />, label: "Cluster Markers", key: "cluster" },
+  { icon: <Icon path="M12 2l7 4v6l-7 4-7-4V6l7-4zM12 12l7-4M12 12v6M12 12L5 8" />, label: "Extrusión 3D", key: "extrusion3d" },
+  { icon: <Icon path="M12 7v5l3 2" />, label: "Isochrones", key: "isochrones" },
+  { icon: <Icon path="M3 11h4v8H3zm7-4h4v12h-4zm7-4h4v16h-4z" />, label: "Voronoi", key: "voronoi" },
 ];
 
 interface SidebarProps {
@@ -57,21 +29,67 @@ interface SidebarProps {
   onClusterRadiusChange: (value: number) => void;
   maxHeight: number;
   onMaxHeightChange: (value: number) => void;
-  // New parameters
   budget: number;
   onBudgetChange: (value: number) => void;
   maxParques: number;
   onMaxParquesChange: (value: number) => void;
   maxEscuelas: number;
   onMaxEscuelasChange: (value: number) => void;
+  onCsvPolygonLoaded?: (csvText: string, options?: { invert?: boolean }) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ active, onSelect, budget, onBudgetChange, maxParques, onMaxParquesChange, maxEscuelas, onMaxEscuelasChange }) => {
+const Sidebar: React.FC<SidebarProps> = ({
+  active,
+  onSelect,
+  budget,
+  onBudgetChange,
+  maxParques,
+  onMaxParquesChange,
+  maxEscuelas,
+  onMaxEscuelasChange,
+  onCsvPolygonLoaded,
+}) => {
+  const [invertLatLon, setInvertLatLon] = useState(false);
   const formatCurrency = (v: number) =>
-    new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(v);
+    new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency: "MXN",
+      maximumFractionDigits: 0,
+    }).format(v);
+
+  // ---------- HANDLER: Cargar CSV / XLSX ----------
+  const handleFileLoad = (file: File) => {
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    const isExcel =
+      ext === "xlsx" || ext === "xls" || (file.type && file.type.includes("spreadsheet"));
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        let csvText = "";
+        if (isExcel) {
+          const data = new Uint8Array(reader.result as ArrayBuffer);
+          const wb = XLSX.read(data, { type: "array" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          csvText = XLSX.utils.sheet_to_csv(ws, { FS: "," });
+        } else {
+          csvText = String(reader.result || "");
+        }
+        onCsvPolygonLoaded?.(csvText, { invert: invertLatLon });
+      } catch (err) {
+        console.error("Error leyendo el archivo:", err);
+        alert("No se pudo leer el archivo. Ver consola para más detalles.");
+      }
+    };
+    if (isExcel) reader.readAsArrayBuffer(file);
+    else reader.readAsText(file);
+  };
+
   return (
-    <div className="sidebar">
-      <div className="sidebar-header">Nasa Space Apps</div>
+    <aside className="sidebar">
+      <h2 className="sidebar-header">NASA Space Apps</h2>
+
+      {/* Menú principal */}
       <nav className="sidebar-nav">
         {menuItems.map((item) => (
           <div
@@ -79,69 +97,106 @@ const Sidebar: React.FC<SidebarProps> = ({ active, onSelect, budget, onBudgetCha
             className={`sidebar-item ${active === item.key ? "active" : ""}`}
             onClick={() => onSelect(item.key)}
           >
-            <div className="icon">{item.icon}</div>
-            <div className="label">{item.label}</div>
+            <span className="icon">{item.icon}</span>
+            <span className="label">{item.label}</span>
           </div>
         ))}
       </nav>
-      <div className="sidebar-footer">
-        <div style={{ padding: '12px 10px' }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Parámetros</div>
 
-          {/* Presupuesto */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
-              <span>Presupuesto</span>
-              <span>{formatCurrency(budget)}</span>
-            </div>
+      {/* Panel de parámetros */}
+      <section className="sidebar-footer">
+        <div style={{ padding: "12px 10px" }}>
+          <h3 style={{ fontWeight: 700, marginBottom: 8 }}>Parámetros</h3>
+
+          {/* ---- Cargar CSV ---- */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, display: "block" }}>
+              Cargar CSV o Excel (lat, lon)
+            </label>
             <input
-              type="range"
-              min={0}
-              max={1000000}
-              step={10000}
-              value={budget}
-              onChange={(e) => onBudgetChange(Number(e.target.value))}
-              style={{ width: '100%' }}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              onChange={(e) => e.target.files?.[0] && handleFileLoad(e.target.files[0])}
+              style={{ width: "100%" }}
             />
+            
           </div>
 
-          {/* Nº máximo de parques */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
-              <span>Nº máx. de parques</span>
-              <span>{maxParques}</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={maxParques}
-              onChange={(e) => onMaxParquesChange(Number(e.target.value))}
-              style={{ width: '100%' }}
-            />
-          </div>
+          {/* ---- Sliders ---- */}
+          <Slider
+            label="Presupuesto"
+            valueLabel={formatCurrency(budget)}
+            value={budget}
+            min={0}
+            max={1000000}
+            step={10000}
+            onChange={onBudgetChange}
+          />
 
-          {/* Nº máximo de escuelas */}
-          <div style={{ marginBottom: 4 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
-              <span>Nº máx. de escuelas</span>
-              <span>{maxEscuelas}</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={maxEscuelas}
-              onChange={(e) => onMaxEscuelasChange(Number(e.target.value))}
-              style={{ width: '100%' }}
-            />
-          </div>
+          <Slider
+            label="Nº máx. de parques"
+            value={maxParques}
+            min={0}
+            max={100}
+            step={1}
+            onChange={onMaxParquesChange}
+          />
+
+          <Slider
+            label="Nº máx. de escuelas"
+            value={maxEscuelas}
+            min={0}
+            max={100}
+            step={1}
+            onChange={onMaxEscuelasChange}
+          />
         </div>
-      </div>
-    </div>
+      </section>
+    </aside>
   );
 };
+
+// ---- Slider Reutilizable ----
+interface SliderProps {
+  label: string;
+  value: number | string;
+  valueLabel?: string;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (val: number) => void;
+}
+const Slider: React.FC<SliderProps> = ({
+  label,
+  value,
+  valueLabel,
+  min,
+  max,
+  step,
+  onChange,
+}) => (
+  <div style={{ marginBottom: 14 }}>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        fontSize: 12,
+        marginBottom: 4,
+      }}
+    >
+      <span>{label}</span>
+      <span>{valueLabel ?? value}</span>
+    </div>
+    <input
+      type="range"
+      min={min}
+      max={max}
+      step={step}
+      value={Number(value)}
+      onChange={(e) => onChange(Number(e.target.value))}
+      style={{ width: "100%" }}
+    />
+  </div>
+);
 
 export default Sidebar;
