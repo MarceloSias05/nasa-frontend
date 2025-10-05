@@ -62,7 +62,7 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
   return (
     <div className="sidebar">
-      <div className="sidebar-header">City Insights</div>
+      <div className="sidebar-header">Nasa Space Apps</div>
       <nav className="sidebar-nav">
         {menuItems.map((item) => (
           <div

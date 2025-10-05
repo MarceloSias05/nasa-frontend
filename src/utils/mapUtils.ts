@@ -18,43 +18,63 @@ export const clampViewState = (vs: any) => {
 };
 
 export const generateGridLines = (bounds: number[][], cellKm = CELL_SIZE_KM, refLat = 0, alignToGlobal = true, paddingCells = 1) => {
-  let [[west, south], [east, north]] = bounds.map(b => b.slice()) as number[][];
-  const metersPerDegLat = 111320;
-  const latRad = (refLat * Math.PI) / 180;
-  const metersPerDegLon = Math.abs(Math.cos(latRad) * metersPerDegLat);
+  // We'll build the grid in WebMercator (meters) so cells are true 1.5km x 1.5km
+  // in projected coordinates, then convert back to lon/lat for the GeoJSON. This
+  // avoids the visual distortion you saw when building the grid using fixed
+  // degree deltas.
+  const R = 6378137; // earth radius for WebMercator
+  const deg2rad = (d: number) => (d * Math.PI) / 180;
+  const rad2deg = (r: number) => (r * 180) / Math.PI;
 
-  const latDelta = (cellKm * 1000) / metersPerDegLat;
-  const lonDelta = (cellKm * 1000) / metersPerDegLon;
+  const lonLatToMerc = (lon: number, lat: number) => {
+    const x = R * deg2rad(lon);
+    const y = R * Math.log(Math.tan(Math.PI / 4 + deg2rad(lat) / 2));
+    return [x, y];
+  };
 
-  west = west - lonDelta * paddingCells;
-  east = east + lonDelta * paddingCells;
-  south = south - latDelta * paddingCells;
-  north = north + latDelta * paddingCells;
+  const mercToLonLat = (x: number, y: number) => {
+    const lon = rad2deg(x / R);
+    const lat = rad2deg(2 * Math.atan(Math.exp(y / R)) - Math.PI / 2);
+    return [lon, lat];
+  };
+
+  let [[west, south], [east, north]] = bounds.map((b) => b.slice()) as number[][];
+
+  // Convert geographic bounds to mercator meters
+  const [westM, southM] = lonLatToMerc(west, south);
+  const [eastM, northM] = lonLatToMerc(east, north);
+
+  // cell size in meters
+  const cellMeters = Math.round(cellKm * 1000);
+
+  // apply padding in cells (in meters)
+  const pad = paddingCells * cellMeters;
+  const minX = Math.min(westM, eastM) - pad;
+  const maxX = Math.max(westM, eastM) + pad;
+  const minY = Math.min(southM, northM) - pad;
+  const maxY = Math.max(southM, northM) + pad;
+
+  // Align to global origin (0,0) in mercator meters if requested
+  const startX = alignToGlobal ? Math.floor(minX / cellMeters) * cellMeters : minX;
+  const startY = alignToGlobal ? Math.floor(minY / cellMeters) * cellMeters : minY;
 
   const features: any[] = [];
-  let startLon = west;
-  let startLat = south;
-  if (alignToGlobal) {
-    const originLon = 0;
-    const originLat = 0;
-    startLon = Math.floor((west - originLon) / lonDelta) * lonDelta + originLon;
-    startLat = Math.floor((south - originLat) / latDelta) * latDelta + originLat;
+
+  // vertical lines (constant X)
+  for (let x = startX; x <= maxX + cellMeters / 2; x += cellMeters) {
+    // clamp x to bounds
+    const xClamped = Math.min(Math.max(x, minX), maxX);
+    const p1 = mercToLonLat(xClamped, minY);
+    const p2 = mercToLonLat(xClamped, maxY);
+    features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [p1, p2] } });
   }
 
-  for (let lon = startLon; lon <= east + lonDelta / 2; lon += lonDelta) {
-    const x = lon;
-    if (x < west - 1e-12) continue;
-    const xc = Math.min(x, east);
-    features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[xc, south], [xc, north]] } });
-    if (x >= east) break;
-  }
-
-  for (let lat = startLat; lat <= north + latDelta / 2; lat += latDelta) {
-    const y = lat;
-    if (y < south - 1e-12) continue;
-    const yc = Math.min(y, north);
-    features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[west, yc], [east, yc]] } });
-    if (y >= north) break;
+  // horizontal lines (constant Y)
+  for (let y = startY; y <= maxY + cellMeters / 2; y += cellMeters) {
+    const yClamped = Math.min(Math.max(y, minY), maxY);
+    const p1 = mercToLonLat(minX, yClamped);
+    const p2 = mercToLonLat(maxX, yClamped);
+    features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [p1, p2] } });
   }
 
   return { type: 'FeatureCollection', features };

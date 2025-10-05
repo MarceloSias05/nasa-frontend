@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import MapView from "./components/MapView";
 import Sidebar from "./components/Sidebar/Sidebar";
-import { GeoJsonLayer } from "@deck.gl/layers";
+import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { ScenegraphLayer } from "@deck.gl/mesh-layers";
 import type { FeatureCollection, LineString, Point } from "geojson";
 import {
@@ -12,10 +12,12 @@ import {
 } from "./config";
 import { clampViewState, generateGridLines } from "./utils/mapUtils";
 import { geocode } from "./services/geocoding";
+import type { GeocodeResult } from "./services/geocoding";
 
 export default function App(): React.ReactElement {
   const [mapMode, setMapMode] = useState<"streets" | "satellite">("streets");
   const [is3D, setIs3D] = useState(true);
+  const [savedCamera, setSavedCamera] = useState<{pitch?: number; bearing?: number} | null>(null);
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE as any);
   const [showGrid, setShowGrid] = useState(false);
   const [activeVis, setActiveVis] = useState<string>("hexbin");
@@ -26,11 +28,29 @@ export default function App(): React.ReactElement {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<any | null>(null);
   const [streetViewOpen, setStreetViewOpen] = useState(false);
   const [streetViewCoords, setStreetViewCoords] = useState<[number, number] | null>(null);
   const [showHuman3D, setShowHuman3D] = useState(false);
   const [humanCoords, setHumanCoords] = useState<[number, number] | null>(null);
+  const [featurePopup, setFeaturePopup] = useState<{lng: number; lat: number; title: string; details?: any; screenX?: number; screenY?: number} | null>(null);
+  const [animTime, setAnimTime] = useState<number>(0);
+
+  // lightweight animation loop only when there's a highlight target
+  React.useEffect(() => {
+    let raf = 0 as unknown as number;
+    const tick = (t: number) => {
+      setAnimTime(t);
+      raf = requestAnimationFrame(tick);
+    };
+    if (selectedResult || featurePopup) {
+      raf = requestAnimationFrame(tick);
+    }
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [selectedResult, featurePopup]);
 
   // ---------- BASE LAYER ----------
   const baseLayer = useMemo(
@@ -50,31 +70,22 @@ export default function App(): React.ReactElement {
 
   const layers: any[] = [baseLayer];
 
-  // ---------- GRID LAYER ----------
+  // ---------- GRID LAYER (fixed 1.5km cells anchored to MAP_BOUNDS) ----------
+  // Generate the grid once from the fixed MAP_BOUNDS using CELL_SIZE_KM so the
+  // grid stays in world coordinates and does not shift when zooming.
   const gridData = useMemo(() => {
     if (!showGrid) return null;
     const [[w, s], [e, n]] = MAP_BOUNDS as any;
-    const padCells = Math.max(
-      20,
-      Math.round(100 / Math.max(1, viewState.zoom || INITIAL_VIEW_STATE.zoom))
-    );
-    const latPad = ((CELL_SIZE_KM * 1000) / 111320) * padCells;
-    const metersPerDegLon = Math.abs(
-      Math.cos((viewState.latitude * Math.PI) / 180) * 111320
-    );
-    const lonPad = ((CELL_SIZE_KM * 1000) / metersPerDegLon) * padCells;
-    const bigBounds = [
-      [w - lonPad, s - latPad],
-      [e + lonPad, n + latPad],
+    // Use the central latitude of the bounds as reference for degree<->meter conversion
+    const refLat = (s + n) / 2;
+    const bounds = [
+      [w, s],
+      [e, n],
     ];
-    return generateGridLines(
-      bigBounds,
-      CELL_SIZE_KM,
-      viewState.latitude || INITIAL_VIEW_STATE.latitude,
-      true,
-      0
-    );
-  }, [showGrid, viewState.zoom, viewState.latitude]);
+  // Align grid to the city's original delimitations (use the bounds' min lon/lat
+  // as the origin) so grid lines start exactly at the city's west/south edges.
+  return generateGridLines(bounds, CELL_SIZE_KM, refLat, false, 0);
+  }, [showGrid]);
 
   if (showGrid && gridData) {
     layers.push(
@@ -118,6 +129,57 @@ export default function App(): React.ReactElement {
     );
   }
 
+  // ---------- HIGHLIGHT PULSE (visual impact, easy) ----------
+  const highlightCoords: [number, number] | null = selectedResult
+    ? [selectedResult.lon, selectedResult.lat]
+    : featurePopup
+      ? [featurePopup.lng, featurePopup.lat]
+      : null;
+
+  if (highlightCoords) {
+    const phase = (animTime % 1000) / 1000; // 0..1 every ~1s
+    const pulseData = [{ position: highlightCoords }];
+
+    // Core dot
+    layers.push(
+      new ScatterplotLayer({
+        id: 'highlight-core',
+        data: pulseData,
+        getPosition: (d: any) => d.position,
+        radiusUnits: 'pixels',
+        getRadius: 6,
+        filled: true,
+        getFillColor: [0, 120, 255, 240],
+        stroked: true,
+        getLineColor: [255, 255, 255, 230],
+        lineWidthUnits: 'pixels',
+        getLineWidth: 2,
+        pickable: false,
+      })
+    );
+
+    // Expanding ring
+    layers.push(
+      new ScatterplotLayer({
+        id: 'highlight-pulse',
+        data: pulseData,
+        getPosition: (d: any) => d.position,
+        radiusUnits: 'pixels',
+        filled: false,
+        stroked: true,
+        getRadius: 12 + phase * 22, // 12px -> 34px
+        getLineColor: [0, 120, 255, Math.max(20, Math.floor((1 - phase) * 180))],
+        lineWidthUnits: 'pixels',
+        getLineWidth: 2,
+        updateTriggers: {
+          getRadius: [phase],
+          getLineColor: [phase],
+        },
+        pickable: false,
+      })
+    );
+  }
+
   // ---------- HUMAN 3D MODEL ----------
   if (showHuman3D && humanCoords) {
     layers.push(
@@ -142,20 +204,30 @@ export default function App(): React.ReactElement {
       const results = await geocode(q);
       if (!results.length) {
         setSearchError("No se encontró la dirección");
+        setSearchResults([]);
         return;
       }
-      setSelectedResult(results[0]);
-      setViewState({
-        ...viewState,
-        longitude: results[0].lon,
-        latitude: results[0].lat,
-        zoom: Math.max(viewState.zoom || 11, 14),
-      });
+      // show dropdown of results; if there's only one, auto-select it
+      setSearchResults(results);
+      if (results.length === 1) {
+        const r = results[0];
+        setSelectedResult(r);
+        setSearchQuery(r.name || `${r.lat},${r.lon}`);
+        setSearchResults([]);
+        setViewState({ ...viewState, longitude: r.lon, latitude: r.lat, zoom: Math.max(viewState.zoom || 11, 14) });
+      }
     } catch (err: any) {
       setSearchError(err.message || "Error de geocodificación");
     } finally {
       setIsSearching(false);
     }
+  };
+
+  const selectSearchResult = (r: GeocodeResult) => {
+    setSelectedResult(r);
+    setSearchQuery(r.name || `${r.lat},${r.lon}`);
+    setSearchResults([]);
+    setViewState({ ...viewState, longitude: r.lon, latitude: r.lat, zoom: Math.max(viewState.zoom || 11, 14) });
   };
 
   // ---------- MAP BOUNDS ----------
@@ -196,7 +268,41 @@ export default function App(): React.ReactElement {
           onViewStateChange={(vs: any) => setViewState(clampViewState(vs))}
           layers={layers}
           mapMode={mapMode}
+          is3D={is3D}
           onMapLoad={onMapLoad}
+          onFeatureClick={(features, map, clickInfo) => {
+            try {
+              if (!features || !features.length) {
+                setFeaturePopup(null);
+                return;
+              }
+              const f = features[0];
+              const name = (f.properties && (f.properties.name || f.properties.label || f.properties.title)) || f.text || f.place_name || (f.properties && JSON.stringify(f.properties)) || 'Feature';
+              const coords = (f.geometry && f.geometry.coordinates) || (clickInfo && (clickInfo.coordinate || clickInfo.lngLat)) || null;
+              const lon = coords ? coords[0] : viewState.longitude;
+              const lat = coords ? coords[1] : viewState.latitude;
+
+              // determine screen position: use clickInfo.x/y if present, else use map.project
+              let px: number | null = null;
+              let py: number | null = null;
+              if (clickInfo && typeof clickInfo.x === 'number' && typeof clickInfo.y === 'number') {
+                px = clickInfo.x;
+                py = clickInfo.y;
+              } else if (map && typeof map.project === 'function') {
+                try {
+                  const p = map.project([lon, lat]);
+                  px = p.x;
+                  py = p.y;
+                } catch (e) {
+                  px = null;
+                }
+              }
+
+              setFeaturePopup({ lng: lon, lat: lat, title: name, details: f, screenX: px ?? 12, screenY: py ?? 72 } as any);
+            } catch (err) {
+              setFeaturePopup(null);
+            }
+          }}
         />
 
         {/* ---------- Search & Controls ---------- */}
@@ -228,6 +334,20 @@ export default function App(): React.ReactElement {
             </button>
           </div>
 
+          {/* Dropdown results */}
+          {searchResults && searchResults.length > 0 && (
+            <div style={{ position: 'relative', marginBottom: 8 }}>
+              <div style={{ position: 'absolute', right: 0, width: 300, background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', borderRadius: 6, maxHeight: 220, overflow: 'auto', zIndex: 50 }}>
+                {searchResults.map((r, idx) => (
+                  <div key={idx} onClick={() => selectSearchResult(r)} style={{ padding: '8px', borderBottom: '1px solid #eee', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
+                    <div style={{ fontSize: 12, color: '#666' }}>{r.lat.toFixed(5)}, {r.lon.toFixed(5)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {searchError && (
             <div style={{ color: "crimson", fontSize: 12, marginBottom: 6 }}>
               {searchError}
@@ -238,7 +358,18 @@ export default function App(): React.ReactElement {
             <button onClick={() => setMapMode(mapMode === "streets" ? "satellite" : "streets")}>
               {mapMode === "streets" ? "Satélite" : "Mapa"}
             </button>
-            <button onClick={() => setIs3D((v) => !v)}>
+            <button onClick={() => {
+              // toggle 3D/2D: when switching to 2D save current pitch/bearing then flatten
+              if (is3D) {
+                setSavedCamera({ pitch: viewState.pitch, bearing: viewState.bearing });
+                setViewState({ ...viewState, pitch: 0, bearing: 0 });
+                setIs3D(false);
+              } else {
+                // restore saved camera if available
+                setViewState({ ...viewState, pitch: savedCamera?.pitch ?? 45, bearing: savedCamera?.bearing ?? 0 });
+                setIs3D(true);
+              }
+            }}>
               {is3D ? "3D" : "2D"}
             </button>
             <button
@@ -347,6 +478,48 @@ export default function App(): React.ReactElement {
             )}
           </div>
         </div>
+        {featurePopup && (() => {
+            const sx = Math.max(8, Math.min((featurePopup.screenX ?? 12), window.innerWidth - 380));
+            const sy = Math.max(8, Math.min((featurePopup.screenY ?? 72), window.innerHeight - 260));
+            return (
+              <div style={{ position: 'absolute', left: sx, top: sy, zIndex: 60, width: 360 }}>
+                <div style={{ background: 'white', padding: 12, borderRadius: 8, boxShadow: '0 4px 14px rgba(0,0,0,0.18)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{featurePopup.title}</div>
+                      <div style={{ fontSize: 12, color: '#555' }}>{featurePopup.lat.toFixed(5)}, {featurePopup.lng.toFixed(5)}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={() => {
+                        try {
+                          const text = JSON.stringify(featurePopup.details || {}, null, 2);
+                          if (navigator.clipboard) navigator.clipboard.writeText(text);
+                        } catch {}
+                      }}>Copiar JSON</button>
+                      <button onClick={() => setFeaturePopup(null)}>Cerrar</button>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 10, maxHeight: 220, overflow: 'auto' }}>
+                    {featurePopup.details && featurePopup.details.properties ? (
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <tbody>
+                          {Object.entries(featurePopup.details.properties).map(([k, v]) => (
+                            <tr key={k} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                              <td style={{ padding: '6px 8px', fontSize: 13, color: '#333', width: '40%', verticalAlign: 'top' }}><strong>{k}</strong></td>
+                              <td style={{ padding: '6px 8px', fontSize: 13, color: '#444' }}>{String(v)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <pre style={{ fontSize: 12, color: '#333', whiteSpace: 'pre-wrap' }}>{JSON.stringify(featurePopup.details || {}, null, 2)}</pre>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
       </div>
     </div>
   );
