@@ -22,6 +22,7 @@ import { geocode } from "./services/geocoding";
 import type { GeocodeResult } from "./services/geocoding";
 import { useAreaAnalysis } from "./hooks/useAreaAnalysis";
 import usePopulation from './hooks/usePopulation';
+import useEducation from './hooks/useEducation';
 // removed unused urbanQuality import
 // removed unused polygonToLatLon import
 import { parseLatLonCsv, coordsToPolygonFeatureCollection } from "./utils/csv";
@@ -74,14 +75,17 @@ export default function App(): React.ReactElement {
   } | null>(null);
   // removed unused wktSelectedLayer state
   const [originalCsvFc, setOriginalCsvFc] = useState<any | null>(null);
+  const [uploadedCsvText, setUploadedCsvText] = useState<string | null>(null);
   const [freezeUploaded, setFreezeUploaded] = useState<boolean>(false);
 
   const { analyzeArea, loading, error } = useAreaAnalysis();
   const [apiPopulationEnabled, setApiPopulationEnabled] = useState<boolean>(false);
+  const [apiEducationEnabled, setApiEducationEnabled] = useState<boolean>(false);
 
   // derive bbox from MAP_BOUNDS: [[w,s],[e,n]]
   const [[wBound, sBound], [eBound, nBound]] = MAP_BOUNDS as any;
   const { data: apiPopulation } = usePopulation(sBound, nBound, wBound, eBound);
+  const { data: apiEducation } = useEducation(sBound, nBound, wBound, eBound);
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [showSaveModal, setShowSaveModal] = useState<boolean>(false);
@@ -134,6 +138,35 @@ export default function App(): React.ReactElement {
       console.warn('Error building hex layer from API data', e);
     }
   }, [apiPopulation, apiPopulationEnabled, hexRadius, hexElevationScale, is3D]);
+
+  // Build education scatter layer (cluster markers) when enabled
+  useEffect(() => {
+    try {
+      if (!apiEducation || !apiEducationEnabled) return;
+      const pts = (apiEducation || []).filter((r: any) => Number.isFinite(r.lon) && Number.isFinite(r.lat))
+        .map((r: any) => ({ position: [Number(r.lon), Number(r.lat)], grade: Number(r.GRAPROES ?? 0) }));
+      if (!pts.length) return;
+      const maxGrade = Math.max(...pts.map((p) => p.grade || 0), 1);
+      const scatter = new ScatterplotLayer({
+        id: 'education-cluster',
+        data: pts,
+        getPosition: (d: any) => d.position,
+        getFillColor: (d: any) => {
+          // map grade to green intensity
+          const t = Math.max(0, Math.min(1, (d.grade || 0) / maxGrade));
+          const g = Math.round(120 + t * 135); // 120..255
+          return [30, g, 30, 200];
+        },
+        getRadius: (d: any) => 30 + (d.grade || 0) * 6,
+        radiusScale: 1,
+        pickable: true,
+        opacity: 0.9,
+      });
+      setCustomLayer(scatter);
+    } catch (e) {
+      console.warn('Error building education scatter layer', e);
+    }
+  }, [apiEducation, apiEducationEnabled]);
 
   const saveHistory = (note?: string) => {
     try {
@@ -292,6 +325,9 @@ export default function App(): React.ReactElement {
 
   const layers: any[] = [baseLayer];
 
+  // Execute result layer (LLM returned lon/lats)
+  const [executeLayer, setExecuteLayer] = useState<any | null>(null);
+
   // ---------- GRID LAYER ----------
   const gridData = useMemo(() => {
     if (!showGrid) return null;
@@ -319,6 +355,7 @@ export default function App(): React.ReactElement {
   // ---------- CUSTOM LAYER (backend output) ----------
   if (customLayer) layers.push(customLayer);
   if (csvPolygonLayer) layers.push(csvPolygonLayer);
+  if (executeLayer) layers.push(executeLayer);
 
   // ---------- SEARCH MARKER ----------
   if (selectedResult) {
@@ -453,6 +490,8 @@ export default function App(): React.ReactElement {
 
   // ---------- CSV POLYGON UPLOAD ----------
   const handleCsvPolygonLoaded = (csvText: string, options?: { invert?: boolean }) => {
+    // store raw CSV text for Execute payload
+    setUploadedCsvText(csvText);
     try {
       // Detect WKT content: many lines starting with POLYGON/MULTIPOLYGON or the text contains POLYGON
       const isWkt = /\b(POLYGON|MULTIPOLYGON)\b/i.test(csvText);
@@ -608,6 +647,11 @@ export default function App(): React.ReactElement {
             setShowSaveModal(true);
             return;
           }
+          if (key === 'cluster') {
+            // Toggle education clustering visualization
+            setApiEducationEnabled((v) => !v);
+            return;
+          }
           setActiveVis(key);
         }}
         layer={layer}
@@ -756,6 +800,62 @@ export default function App(): React.ReactElement {
             onAreaDrawn={handleAreaSelected}
           />
         )}
+
+        {/* Execute button bottom-left */}
+        <div style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 9999 }}>
+          <button
+            onClick={async () => {
+              try {
+                // prepare polygon corners (only the exterior ring of originalCsvFc)
+                if (!originalCsvFc || !originalCsvFc.features || !originalCsvFc.features.length) {
+                  alert('No polygon loaded. Cargue un CSV con las coordenadas del polígono.');
+                  return;
+                }
+                const poly = originalCsvFc.features[0];
+                const coords = (poly.geometry && poly.geometry.coordinates && poly.geometry.coordinates[0]) || [];
+                const corners = coords.map((c: any) => ({ lon: Number(c[0]), lat: Number(c[1]) }));
+                // POST to the LLM endpoint (backend should proxy to the LLM)
+                const payload = {
+                  csv: uploadedCsvText,
+                  budget,
+                  maxParques,
+                  maxEscuelas,
+                  corners: corners.slice(0, corners.length - 1), // drop closing coord repeat if present
+                };
+                const resp = await fetch((window as any).__LLM_ENDPOINT_URL || '/api/v1/llm', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload),
+                });
+                if (!resp.ok) throw new Error('LLM request failed: ' + resp.status);
+                const out = await resp.json();
+                // expect out to be array of { lon, lat }
+                if (!Array.isArray(out)) throw new Error('Invalid LLM response');
+                const pts = out.filter((p: any) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
+                  .map((p: any) => ({ position: [Number(p.lon), Number(p.lat)] }));
+                if (!pts.length) {
+                  alert('El LLM no devolvió coordenadas válidas.');
+                  return;
+                }
+                const scatter = new ScatterplotLayer({
+                  id: 'execute-result',
+                  data: pts,
+                  getPosition: (d: any) => d.position,
+                  getFillColor: [255, 0, 0, 200],
+                  getRadius: 60,
+                  pickable: true,
+                });
+                setExecuteLayer(scatter);
+              } catch (e: any) {
+                console.error('Execute error', e);
+                alert('Error ejecutando: ' + (e?.message || e));
+              }
+            }}
+            style={{ background: '#0b74c9', color: '#fff', padding: '8px 12px', borderRadius: 6, border: 'none' }}
+          >
+            Execute
+          </button>
+        </div>
 
         {/* Loading / Error overlays */}
         {loading && (

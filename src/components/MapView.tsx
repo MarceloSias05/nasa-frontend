@@ -83,7 +83,7 @@ const MapView: React.FC<MapViewProps> = ({
       viewState={viewState}
       onViewStateChange={({ viewState: vs }: any) => onViewStateChange(vs)}
       controller={{ dragPan: true, dragRotate: is3D, scrollZoom: true }}
-      layers={[...layers, editableLayer]}
+  layers={[...layers, ...(drawMode ? [editableLayer] : [])]}
       onClick={(info: any, event: any) => {
         try {
           if (!onFeatureClick) return;

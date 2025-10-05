@@ -12,7 +12,7 @@ const Icon = ({ path, size = 16 }: { path: string; size?: number }) => (
 
 const menuItems = [
   { icon: <Icon path="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" />, label: "Cargar Población", key: "load-population" },
-  { icon: <Icon path="M9 3L5 5v13l4 2 4-2 4 2V5l-4-2-4 2z" />, label: "Cluster Markers", key: "cluster" },
+  { icon: <Icon path="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39.39.39 1.02 0 1.41l-2.34 2.34-3.75-3.75 2.34-2.34c.39-.39 1.02-.39 1.41 0l2.34 2.34z" />, label: "Escuelas", key: "cluster" },
   { icon: <Icon path="M12 2l7 4v6l-7 4-7-4V6l7-4zM12 12l7-4M12 12v6M12 12L5 8" />, label: "Extrusión 3D", key: "extrusion3d" },
   { icon: <Icon path="M3 3h18v2H3zM3 7h18v2H3zM3 11h18v2H3zM3 15h18v2H3z" />, label: "Guardar historial", key: "save-history" },
   { icon: <Icon path="M4 6h16v2H4zM4 10h16v2H4zM4 14h16v2H4z" />, label: "Historial", key: "history" },

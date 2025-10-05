@@ -10,7 +10,7 @@ export const INITIAL_VIEW_STATE = {
   // Reasonable pitch to tilt the camera toward the horizon (0 = top-down)
   pitch: 60,
   bearing: 0,
-  minZoom: 5,
+  minZoom: 12,
   maxZoom: 20,
 };
 
